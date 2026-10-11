@@ -1,0 +1,128 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() && (
+        request.auth.token.role == 'admin' ||
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin'
+      );
+    }
+
+    // 1. Users Collection: PRIVATE account data (contains email, CV, status)
+    // Only readable by the account owner or an admin. Logged-out users or other users CANNOT read.
+    match /users/{userId} {
+      allow read: if isOwner(userId) || isAdmin();
+      allow create: if isOwner(userId) &&
+        request.resource.data.role in ['student', 'researcher', 'supervisor'] &&
+        request.resource.data.status == 'active';
+      allow update: if (isOwner(userId) &&
+        request.resource.data.role == resource.data.role &&
+        request.resource.data.status == resource.data.status) || isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    // 2. Public Profiles Collection: PUBLIC directory fields ONLY
+    // Stores: name, photoURL, avatar, headline, department, institution, role, interests, skills, bio, links
+    // Strictly NO email, password, cv files, or private fields allowed.
+    // Read: Allowed for any authenticated user.
+    // Write: Allowed only to the owner (or admin), and owner can never write email or private fields.
+    match /publicProfiles/{userId} {
+      allow read: if isAuthenticated();
+      allow create, update: if (isOwner(userId) || isAdmin()) &&
+        !('email' in request.resource.data) &&
+        !('password' in request.resource.data) &&
+        !('passwordHash' in request.resource.data) &&
+        !('salt' in request.resource.data) &&
+        !('cvUrl' in request.resource.data) &&
+        !('cvFileName' in request.resource.data) &&
+        !('cvFileSize' in request.resource.data) &&
+        !('cvFileData' in request.resource.data) &&
+        !('sessionToken' in request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    // 3. Projects Collection: Publicly discoverable research opportunities
+    match /projects/{projectId} {
+      allow read: if true; // Publicly viewable
+      allow create: if isAuthenticated() && (
+        request.resource.data.supervisorId == request.auth.uid || isAdmin()
+      );
+      allow update: if isAuthenticated() && (
+        resource.data.supervisorId == request.auth.uid || isAdmin()
+      );
+      allow delete: if isAuthenticated() && (
+        resource.data.supervisorId == request.auth.uid || isAdmin()
+      );
+    }
+
+    // 4. Applications Collection
+    match /applications/{applicationId} {
+      // Users can only read their own applications, or supervisor/owner of the project, or admin
+      allow read: if isAuthenticated() && (
+        resource.data.applicantUid == request.auth.uid ||
+        resource.data.userId == request.auth.uid ||
+        resource.data.supervisorId == request.auth.uid ||
+        get(/databases/$(database)/documents/projects/$(resource.data.projectId)).data.supervisorId == request.auth.uid ||
+        isAdmin()
+      );
+
+      // Only authenticated users can create an application with their own uid
+      allow create: if isAuthenticated() &&
+        (request.resource.data.applicantUid == request.auth.uid || request.resource.data.userId == request.auth.uid) &&
+        request.resource.data.status == 'pending' &&
+        request.resource.data.projectId != null;
+
+      // Only supervisor/project owner can update (accept/reject)
+      allow update: if isAuthenticated() && (
+        resource.data.supervisorId == request.auth.uid ||
+        get(/databases/$(database)/documents/projects/$(resource.data.projectId)).data.supervisorId == request.auth.uid ||
+        isAdmin()
+      );
+
+      // Applicant can withdraw their pending application
+      allow delete: if isAuthenticated() && (
+        resource.data.applicantUid == request.auth.uid ||
+        resource.data.userId == request.auth.uid ||
+        isAdmin()
+      );
+    }
+
+    // 5. Saved Projects Collection
+    match /saved_projects/{saveId} {
+      allow read, write: if isAuthenticated() && (
+        resource == null || resource.data.userId == request.auth.uid || request.resource.data.userId == request.auth.uid
+      );
+    }
+
+    // 6. Papers Collection
+    match /papers/{paperId} {
+      allow read: if true;
+      allow create: if isAuthenticated() && request.resource.data.uploaderId == request.auth.uid;
+      allow update: if isAuthenticated() && (resource.data.uploaderId == request.auth.uid || isAdmin());
+      allow delete: if isAuthenticated() && (resource.data.uploaderId == request.auth.uid || isAdmin());
+    }
+
+    // 7. Project Messages / Discussion
+    match /messages/{messageId} {
+      allow read, create: if isAuthenticated();
+    }
+
+    // 8. Notifications Collection
+    match /notifications/{notificationId} {
+      allow read, update, delete: if isAuthenticated() && (
+        resource.data.userId == request.auth.uid || isAdmin()
+      );
+      allow create: if isAuthenticated();
+    }
+  }
+}

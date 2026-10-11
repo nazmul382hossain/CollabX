@@ -1,0 +1,80 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --navy: #0B1F4B;
+    --navy-teal-start: #0B2A4A;
+    --navy-teal-end: #0E4A5C;
+    --blue: #1565E8;
+    --green: #0F9D6B;
+    --yellow: #FFC83D;
+    --gold: #F5B82E;
+    --orange: #F15A24;
+    --red: #E5393C;
+    --amber-bg: #FFC857;
+    --amber-text: #B45309;
+    --page-bg: #F4F8FD;
+    --card-bg: #FFFFFF;
+    --chips-bg: #DDE5FB;
+    --border-color: #D5DDEB;
+
+    --pastel-lavender: #E8E9FB;
+    --pastel-mint: #DDF5EA;
+    --pastel-pink: #FBE4E4;
+    --pastel-peach: #FFE9DC;
+    --pastel-lightblue: #E1ECFB;
+    --pastel-grey: #E7E9EE;
+    --pastel-lightgreen: #E4F2D9;
+  }
+
+  html, body {
+    font-family: 'Inter', 'Roboto', system-ui, -apple-system, sans-serif;
+    color: var(--navy);
+    background-color: var(--page-bg);
+    overflow-anchor: none;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    font-family: 'Inter', 'Roboto', sans-serif;
+    font-weight: 700;
+  }
+}
+
+/* Custom Scrollbars */
+::-webkit-scrollbar {
+  width: 7px;
+  height: 7px;
+}
+::-webkit-scrollbar-track {
+  background: #F4F8FD;
+}
+::-webkit-scrollbar-thumb {
+  background: #CBD5E1;
+  border-radius: 999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #94A3B8;
+}
+
+/* Card & Interactive Utilities */
+.card-soft {
+  background: #FFFFFF;
+  border: 1px solid #D5DDEB;
+  border-radius: 16px;
+  box-shadow: 0 4px 20px rgba(11, 31, 75, 0.05);
+}
+
+.card-hover {
+  transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.card-hover:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 26px rgba(11, 31, 75, 0.09);
+}
+
+.glass-dark {
+  background: rgba(11, 31, 75, 0.88);
+  backdrop-filter: blur(14px);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 16px;
+}
