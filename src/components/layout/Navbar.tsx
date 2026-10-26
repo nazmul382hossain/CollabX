@@ -14,14 +14,13 @@ import {
 import { User } from '../../types';
 import { Avatar } from '../common/Avatar';
 import { Logo } from '../common/Logo';
-import { MOCK_USERS } from '../../data/mock';
 
 interface NavbarProps {
   currentUser: User | null;
   onNavigate: (path: string) => void;
   currentPath: string;
   onOpenSearch: () => void;
-  onSwitchUser: (userId: string) => void;
+  onSwitchUser?: (userId: string) => void;
   onLogout: () => void;
   unreadCount: number;
 }
@@ -31,13 +30,11 @@ export const Navbar: React.FC<NavbarProps> = ({
   onNavigate,
   currentPath,
   onOpenSearch,
-  onSwitchUser,
   onLogout,
   unreadCount
 }) => {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [profileDropdownOpen, setProfileDropdownOpen] = useState(false);
-  const [roleSwitcherOpen, setRoleSwitcherOpen] = useState(false);
 
   // Exact centered links from prompt & screenshot: Home, Research Areas, Projects, About
   const navLinks = [
@@ -51,7 +48,6 @@ export const Navbar: React.FC<NavbarProps> = ({
     onNavigate(path);
     setMobileMenuOpen(false);
     setProfileDropdownOpen(false);
-    setRoleSwitcherOpen(false);
   };
 
   const getDashboardPath = (user: User) => {

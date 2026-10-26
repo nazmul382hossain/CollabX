@@ -9,12 +9,10 @@ import {
   Settings, 
   Users, 
   MessageSquare, 
-  CheckCircle2, 
   Sparkles, 
   Layers, 
   UserCheck, 
   BarChart3, 
-  Inbox, 
   TrendingUp, 
   BookOpen
 } from 'lucide-react';
@@ -36,7 +34,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   projectId,
   isProjectWorkspace = false
 }) => {
-  // Navigation items based on role or workspace context
+  // Navigation items based strictly on authenticated role or workspace context
   const getNavItems = () => {
     if (isProjectWorkspace && projectId) {
       return [
@@ -48,18 +46,21 @@ export const Sidebar: React.FC<SidebarProps> = ({
       ];
     }
 
+    // Admin exclusive navigation items: NEVER rendered for non-admins
     if (currentUser.role === 'admin') {
       return [
         { label: 'Dashboard', path: '/admin', icon: Home, activeStyle: 'green' },
         { label: 'Manage Users', path: '/admin/users', icon: Users, activeStyle: 'green' },
         { label: 'Manage Projects', path: '/admin/projects', icon: FolderGit2, activeStyle: 'navy' },
-        { label: 'Research Areas', path: '/research-areas', icon: Layers, activeStyle: 'green' },
+        { label: 'Research Areas', path: '/admin/research-areas', icon: Layers, activeStyle: 'green' },
+        { label: 'Applications', path: '/admin/applications', icon: UserCheck, activeStyle: 'blue' },
+        { label: 'Reports', path: '/admin/reports', icon: BarChart3, activeStyle: 'navy' },
         { label: 'Research Papers', path: '/papers', icon: BookOpen, activeStyle: 'blue' },
-        { label: 'Contact Messages', path: '/contact', icon: Inbox, activeStyle: 'blue' },
-        { label: 'Settings', path: '/settings', icon: Settings, activeStyle: 'gray' }
+        { label: 'Settings', path: '/admin/settings', icon: Settings, activeStyle: 'gray' }
       ];
     }
 
+    // Faculty Supervisors / Academic Researchers
     if (currentUser.role === 'supervisor' || currentUser.role === 'researcher') {
       return [
         { label: 'Dashboard', path: '/researcher', icon: Home, activeStyle: 'green' },
@@ -73,7 +74,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       ];
     }
 
-    // Student default
+    // Student Default: Admin items are completely absent
     return [
       { label: 'Welcome', path: '/dashboard', icon: Home, activeStyle: 'green' },
       { label: 'My Applications', path: '/applications', icon: FileText, activeStyle: 'blue' },
@@ -115,7 +116,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         {/* Logo at the top of the sidebar */}
         <div className="pb-3 border-b border-[#D5DDEB]/60 flex items-center justify-between">
           <Logo size="sm" onClick={() => onNavigate('/')} />
-          <span className="text-[10px] font-bold uppercase tracking-wider text-gray-400 bg-[#F4F8FD] px-2 py-0.5 rounded-full border border-[#D5DDEB]">
+          <span className="text-[10px] font-bold uppercase tracking-wider text-gray-500 bg-[#F4F8FD] px-2 py-0.5 rounded-full border border-[#D5DDEB]">
             {currentUser.role}
           </span>
         </div>
@@ -131,7 +132,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
         {/* Navigation Items (active item = filled pill) */}
         <nav className="space-y-1">
           {navItems.map((item) => {
-            const isActive = currentPath === item.path || (item.path !== '/' && currentPath.startsWith(item.path) && item.path !== '/dashboard' && item.path !== '/researcher' && item.path !== '/admin');
+            const isActive = currentPath === item.path || 
+              (item.path !== '/' && currentPath.startsWith(item.path) && item.path !== '/dashboard' && item.path !== '/researcher' && item.path !== '/admin');
             const Icon = item.icon;
 
             return (

@@ -7,9 +7,11 @@ import { Sidebar } from './components/layout/Sidebar';
 import { TopBar } from './components/layout/TopBar';
 import { Footer } from './components/layout/Footer';
 import { SearchModal } from './components/layout/SearchModal';
-import { ShieldAlert, ArrowRight, UserCheck, Bell, X, MessageSquare } from 'lucide-react';
-import { Button } from './components/common/Button';
-import { signOut, onAuthStateChanged, initializeFirebaseAuth } from './services/firebaseAuth';
+import { ShieldAlert, ArrowRight, Bell, X } from 'lucide-react';
+import { AuthProvider, useAuth } from './contexts/AuthContext';
+import { CompleteVerificationModal } from './components/auth/CompleteVerificationModal';
+import { ProtectedRoute } from './components/auth/ProtectedRoute';
+import { RoleRoute } from './components/auth/RoleRoute';
 
 // Pages
 import { LandingPage } from './pages/LandingPage';
@@ -18,6 +20,7 @@ import { ProjectsPage } from './pages/ProjectsPage';
 import { ProjectDetailsPage } from './pages/ProjectDetailsPage';
 import { LoginPage } from './pages/LoginPage';
 import { RegisterPage } from './pages/RegisterPage';
+import { VerifyPage } from './pages/VerifyPage';
 import { StudentDashboard } from './pages/StudentDashboard';
 import { MyApplicationsPage } from './pages/MyApplicationsPage';
 import { SavedProjectsPage } from './pages/SavedProjectsPage';
@@ -39,8 +42,8 @@ import { PublishProjectPage } from './pages/PublishProjectPage';
 import { GlobalSearchPage } from './pages/GlobalSearchPage';
 import { AboutPage, ContactPage, LegalPage } from './pages/AboutContactLegalPages';
 
-export function App() {
-  const [currentUser, setCurrentUser] = useState<User | null>(storage.getCurrentUser());
+function AppContent() {
+  const { authStatus, currentUser, signOutUser } = useAuth();
   
   // Read path from URL Hash (HashRouter support) or query parameters
   const getInitialPath = () => {
@@ -68,10 +71,29 @@ export function App() {
   const [currentPath, setCurrentPath] = useState<string>(getInitialPath());
   const [searchModalOpen, setSearchModalOpen] = useState(false);
   const [unreadNotifications, setUnreadNotifications] = useState(0);
-  const [activeToast, setActiveToast] = useState<NotificationItem | null>(null);
+  const [activeToast, setActiveToast] = useState<{
+    id: string;
+    title: string;
+    body: string;
+    isError?: boolean;
+    link?: string;
+  } | null>(null);
   const mainContentRef = useRef<HTMLElement>(null);
 
-  // Reset scroll to absolute top on route navigation (instant, preventing any jump or scroll down)
+  // Trigger toast alert: "You don't have access to that page"
+  const showAccessDeniedToast = (customMessage?: string) => {
+    setActiveToast({
+      id: `toast-${Date.now()}`,
+      title: 'Access Restricted',
+      body: customMessage || "You don't have access to that page",
+      isError: true
+    });
+    setTimeout(() => {
+      setActiveToast((prev) => prev?.title === 'Access Restricted' ? null : prev);
+    }, 5000);
+  };
+
+  // Reset scroll to absolute top on route navigation
   useEffect(() => {
     window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
     document.documentElement.scrollTop = 0;
@@ -81,26 +103,29 @@ export function App() {
     }
   }, [currentPath]);
 
-  // Real-time live notifications subscription for currentUser (localStorage + Firestore)
+  // Real-time live notifications subscription for currentUser
   useEffect(() => {
     if (!currentUser) {
       setUnreadNotifications(0);
       return;
     }
 
-    // Subscribe to live notifications updates
     const unsubscribe = messagingService.subscribeToUserNotifications(currentUser.id, (notifs) => {
       const unread = notifs.filter(n => !n.isRead).length;
       setUnreadNotifications(unread);
     });
 
-    // Listen for instant incoming notification toast
     const handleNewNotification = (e: Event) => {
       const customEvent = e as CustomEvent<NotificationItem>;
       if (customEvent.detail && customEvent.detail.userId === currentUser.id) {
-        setActiveToast(customEvent.detail);
+        setActiveToast({
+          id: customEvent.detail.id,
+          title: customEvent.detail.title,
+          body: customEvent.detail.body,
+          link: customEvent.detail.link
+        });
         setTimeout(() => {
-          setActiveToast((prev: NotificationItem | null) => prev?.id === customEvent.detail.id ? null : prev);
+          setActiveToast((prev) => prev?.id === customEvent.detail.id ? null : prev);
         }, 6000);
       }
     };
@@ -113,22 +138,41 @@ export function App() {
     };
   }, [currentUser?.id]);
 
+  // Global toast listener for route events
   useEffect(() => {
-    initializeFirebaseAuth();
-    const unsubscribe = onAuthStateChanged((user) => {
-      setCurrentUser(user);
-    });
+    const handleGenericToast = (e: Event) => {
+      const customEvent = e as CustomEvent<{ message: string; title?: string; type?: string }>;
+      if (customEvent.detail) {
+        setActiveToast({
+          id: `toast-${Date.now()}`,
+          title: customEvent.detail.title || 'Notification',
+          body: customEvent.detail.message,
+          isError: customEvent.detail.type === 'error'
+        });
+        setTimeout(() => {
+          setActiveToast(null);
+        }, 5000);
+      }
+    };
 
-    const handleStorageChange = () => {
-      const user = storage.getCurrentUser();
-      setCurrentUser(user);
-    };
-    window.addEventListener('collabx_storage_change', handleStorageChange);
-    return () => {
-      unsubscribe();
-      window.removeEventListener('collabx_storage_change', handleStorageChange);
-    };
+    window.addEventListener('collabx_toast', handleGenericToast);
+    return () => window.removeEventListener('collabx_toast', handleGenericToast);
   }, []);
+
+  // Navigation decided ONLY by authStatus:
+  // - ready -> redirect to role dashboard if visitor is on login/register/verify
+  useEffect(() => {
+    if (authStatus === 'ready' && currentUser) {
+      if (currentPath === '/login' || currentPath === '/register' || currentPath === '/verify') {
+        const target = currentUser.role === 'admin'
+          ? '/admin'
+          : currentUser.role === 'supervisor' || currentUser.role === 'researcher'
+            ? '/researcher'
+            : '/dashboard';
+        handleNavigate(target);
+      }
+    }
+  }, [authStatus, currentUser, currentPath]);
 
   // HashRouter hashchange event listener
   useEffect(() => {
@@ -167,37 +211,16 @@ export function App() {
     const basePath = path.split('?')[0];
     setCurrentPath(basePath.startsWith('/') ? basePath : `/${basePath}`);
     window.location.hash = path;
-    // Instant scroll to top on route change to prevent auto-scrolling to the bottom
     window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
     document.documentElement.scrollTop = 0;
     document.body.scrollTop = 0;
     if (mainContentRef.current) {
       mainContentRef.current.scrollTop = 0;
     }
-    requestAnimationFrame(() => {
-      window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
-      document.documentElement.scrollTop = 0;
-      document.body.scrollTop = 0;
-      if (mainContentRef.current) {
-        mainContentRef.current.scrollTop = 0;
-      }
-    });
-  };
-
-  const handleSwitchUser = (userId: string) => {
-    const switched = storage.setCurrentUser(userId);
-    if (switched) {
-      setCurrentUser(switched);
-      // Route to role-specific dashboard per prompt
-      if (switched.role === 'admin') handleNavigate('/admin');
-      else if (switched.role === 'supervisor' || switched.role === 'researcher') handleNavigate('/researcher');
-      else handleNavigate('/dashboard');
-    }
   };
 
   const handleLogout = async () => {
-    await signOut();
-    setCurrentUser(null);
+    await signOutUser();
     handleNavigate('/');
   };
 
@@ -207,6 +230,7 @@ export function App() {
     currentPath !== '/' && 
     currentPath !== '/login' && 
     currentPath !== '/register' &&
+    currentPath !== '/verify' &&
     currentPath !== '/about' &&
     currentPath !== '/contact' &&
     currentPath !== '/legal';
@@ -229,48 +253,19 @@ export function App() {
     return match ? match[1] : undefined;
   };
 
-  // Route Guard Access Denied Component
-  const renderAccessDenied = (requiredRole: string, switchUserId: string, switchName: string) => {
-    return (
-      <div className="bg-white rounded-2xl border border-[#D5DDEB] p-8 sm:p-12 text-center max-w-lg mx-auto shadow-sm my-12 space-y-4">
-        <div className="w-14 h-14 rounded-full bg-[#FBE4E4] text-[#E5393C] mx-auto flex items-center justify-center">
-          <ShieldAlert className="w-7 h-7" />
-        </div>
-        <h2 className="text-xl font-bold text-[#0B1F4B]">Restricted Route Access</h2>
-        <p className="text-xs sm:text-sm text-gray-600">
-          This portal section requires <span className="font-bold text-[#0B1F4B] capitalize">{requiredRole}</span> privileges. Your current active role is <span className="font-bold text-[#1565E8] capitalize">{currentUser?.role || 'Guest'}</span>.
-        </p>
-        <div className="pt-2 flex flex-col sm:flex-row items-center justify-center gap-3">
-          <Button
-            variant="primary"
-            size="sm"
-            onClick={() => handleSwitchUser(switchUserId)}
-            icon={<UserCheck className="w-4 h-4" />}
-          >
-            Switch to {switchName}
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => handleNavigate(currentUser?.role === 'admin' ? '/admin' : currentUser?.role === 'supervisor' ? '/researcher' : '/dashboard')}
-          >
-            Return to Dashboard
-          </Button>
-        </div>
-      </div>
-    );
-  };
-
-  // Render active page view with role protection
+  // Render active page view with strict ProtectedRoute and RoleRoute enforcement
   const renderPage = () => {
+    // ---------------------------------------------------------
+    // PUBLIC ROUTES (No Login Required)
+    // ---------------------------------------------------------
     if (currentPath === '/') {
       return <LandingPage onNavigate={handleNavigate} onOpenSearch={() => setSearchModalOpen(true)} />;
     }
+
     if (currentPath === '/login') {
       return (
         <LoginPage
           onLoginSuccess={(u) => {
-            setCurrentUser(u);
             if (u.role === 'admin') handleNavigate('/admin');
             else if (u.role === 'supervisor' || u.role === 'researcher') handleNavigate('/researcher');
             else handleNavigate('/dashboard');
@@ -279,13 +274,13 @@ export function App() {
         />
       );
     }
+
     if (currentPath === '/register') {
       return (
         <RegisterPage
           onNavigate={handleNavigate}
           onRegistered={() => handleNavigate('/login')}
           onLoginSuccess={(u) => {
-            setCurrentUser(u);
             if (u.role === 'admin') handleNavigate('/admin');
             else if (u.role === 'supervisor' || u.role === 'researcher') handleNavigate('/researcher');
             else handleNavigate('/dashboard');
@@ -293,11 +288,39 @@ export function App() {
         />
       );
     }
+
+    if (currentPath === '/verify') {
+      if (currentUser && currentUser.profileComplete === true) {
+        if (currentUser.role === 'admin') handleNavigate('/admin');
+        else if (currentUser.role === 'supervisor' || currentUser.role === 'researcher') handleNavigate('/researcher');
+        else handleNavigate('/dashboard');
+      } else {
+        handleNavigate('/');
+      }
+      return (
+        <div className="min-h-screen flex items-center justify-center bg-white">
+          <div className="w-8 h-8 border-4 border-[#2563EB] border-t-transparent rounded-full animate-spin" />
+        </div>
+      );
+    }
+
     if (currentPath === '/research-areas') {
       return <ResearchAreasPage onNavigate={handleNavigate} />;
     }
 
-    // Projects public/authenticated listing & details
+    if (currentPath === '/about') {
+      return <AboutPage onNavigate={handleNavigate} />;
+    }
+
+    if (currentPath === '/contact') {
+      return <ContactPage />;
+    }
+
+    if (currentPath === '/legal') {
+      return <LegalPage />;
+    }
+
+    // Projects public discoverability & details (approved projects open to guests)
     if (currentPath.startsWith('/projects') && !isWorkspaceContext) {
       const parts = currentPath.split('/');
       if (parts.length === 3 && parts[2]) {
@@ -306,216 +329,7 @@ export function App() {
       return <ProjectsPage currentUser={currentUser} onNavigate={handleNavigate} />;
     }
 
-    // Project workspace sub-routes (Requires Authentication)
-    if (currentPath.includes('/discussion')) {
-      if (!currentUser) {
-        return (
-          <LoginPage
-            onLoginSuccess={(u) => { setCurrentUser(u); handleNavigate(currentPath); }}
-            onNavigate={handleNavigate}
-            message="Please log in to join project discussions."
-          />
-        );
-      }
-      return <ProjectDiscussionPage projectId={getProjectIdFromPath()} currentUser={currentUser} onNavigate={handleNavigate} />;
-    }
-    if (currentPath.includes('/progress')) {
-      if (!currentUser) {
-        return (
-          <LoginPage
-            onLoginSuccess={(u) => { setCurrentUser(u); handleNavigate(currentPath); }}
-            onNavigate={handleNavigate}
-            message="Please log in to view project progress milestones."
-          />
-        );
-      }
-      return <ProjectProgressPage projectId={getProjectIdFromPath()} currentUser={currentUser} onNavigate={handleNavigate} />;
-    }
-    if (currentPath.includes('/team')) {
-      if (!currentUser) {
-        return (
-          <LoginPage
-            onLoginSuccess={(u) => { setCurrentUser(u); handleNavigate(currentPath); }}
-            onNavigate={handleNavigate}
-            message="Please log in to view project team members."
-          />
-        );
-      }
-      return <ProjectTeamPage projectId={getProjectIdFromPath()} currentUser={currentUser} onNavigate={handleNavigate} />;
-    }
-
-    // Student Dashboard
-    if (currentPath === '/dashboard') {
-      if (!currentUser) {
-        return (
-          <LoginPage
-            onLoginSuccess={(u) => {
-              setCurrentUser(u);
-              handleNavigate(u.role === 'admin' ? '/admin' : u.role === 'supervisor' || u.role === 'researcher' ? '/researcher' : '/dashboard');
-            }}
-            onNavigate={handleNavigate}
-            message="Please log in to access your student dashboard."
-          />
-        );
-      }
-      return <StudentDashboard currentUser={currentUser} onNavigate={handleNavigate} />;
-    }
-
-    // Applications Page (Requires Authentication)
-    if (currentPath.startsWith('/applications')) {
-      if (!currentUser) {
-        return (
-          <LoginPage
-            onLoginSuccess={(u) => { setCurrentUser(u); handleNavigate('/applications'); }}
-            onNavigate={handleNavigate}
-            message="Please log in to access your research applications."
-          />
-        );
-      }
-      const urlParams = new URLSearchParams(currentPath.split('?')[1] || '');
-      const filter = urlParams.get('status') || 'all';
-      return <MyApplicationsPage currentUser={currentUser} onNavigate={handleNavigate} initialFilter={filter} />;
-    }
-
-    // Saved Projects Page (Requires Authentication)
-    if (currentPath === '/saved') {
-      if (!currentUser) {
-        return (
-          <LoginPage
-            onLoginSuccess={(u) => { setCurrentUser(u); handleNavigate('/saved'); }}
-            onNavigate={handleNavigate}
-            message="Please log in to view your saved projects."
-          />
-        );
-      }
-      return <SavedProjectsPage currentUser={currentUser} onNavigate={handleNavigate} />;
-    }
-
-    // My Projects Page (Requires Authentication)
-    if (currentPath === '/my-projects') {
-      if (!currentUser) {
-        return (
-          <LoginPage
-            onLoginSuccess={(u) => { setCurrentUser(u); handleNavigate('/my-projects'); }}
-            onNavigate={handleNavigate}
-            message="Please log in to access your collaborative projects."
-          />
-        );
-      }
-      return <MyProjectsPage currentUser={currentUser} onNavigate={handleNavigate} />;
-    }
-
-    // User Profile
-    if (currentPath === '/profile' || currentPath.startsWith('/u/')) {
-      const targetUserId = getProfileUserIdFromPath();
-      if (!currentUser) {
-        return (
-          <LoginPage
-            onLoginSuccess={(u) => { setCurrentUser(u); handleNavigate(currentPath); }}
-            onNavigate={handleNavigate}
-            message="Please log in to access academic profiles."
-          />
-        );
-      }
-      return <ProfilePage currentUser={currentUser} profileUserId={targetUserId} onNavigate={handleNavigate} />;
-    }
-
-    // Researcher / Supervisor Dashboard (Role Protected)
-    if (currentPath === '/researcher') {
-      if (!currentUser) {
-        return (
-          <LoginPage 
-            onLoginSuccess={(u) => { 
-              setCurrentUser(u); 
-              handleNavigate(u.role === 'admin' ? '/admin' : u.role === 'supervisor' || u.role === 'researcher' ? '/researcher' : '/dashboard'); 
-            }} 
-            onNavigate={handleNavigate} 
-            message="Please log in with faculty supervisor credentials."
-          />
-        );
-      }
-      if (currentUser.role === 'student') {
-        return renderAccessDenied('supervisor or researcher', 'user-fahim', 'Dr. Fahim Rahman');
-      }
-      return <ResearcherDashboard currentUser={currentUser} onNavigate={handleNavigate} />;
-    }
-
-    // Notifications Page (Requires Authentication)
-    if (currentPath === '/notifications') {
-      if (!currentUser) {
-        return (
-          <LoginPage
-            onLoginSuccess={(u) => { setCurrentUser(u); handleNavigate('/notifications'); }}
-            onNavigate={handleNavigate}
-            message="Please log in to view your notifications."
-          />
-        );
-      }
-      return <NotificationsPage currentUser={currentUser} onNavigate={handleNavigate} />;
-    }
-
-    // Calendar Page (Requires Authentication)
-    if (currentPath === '/calendar') {
-      if (!currentUser) {
-        return (
-          <LoginPage
-            onLoginSuccess={(u) => { setCurrentUser(u); handleNavigate('/calendar'); }}
-            onNavigate={handleNavigate}
-            message="Please log in to view the research calendar."
-          />
-        );
-      }
-      return <CalendarPage currentUser={currentUser} onNavigate={handleNavigate} />;
-    }
-
-    // Admin Dashboard & Admin Sub-Routes (Role Protected)
-    if (currentPath === '/admin') {
-      if (!currentUser) {
-        return (
-          <LoginPage 
-            onLoginSuccess={(u) => { setCurrentUser(u); handleNavigate('/admin'); }} 
-            onNavigate={handleNavigate} 
-            message="Administrator authentication required."
-          />
-        );
-      }
-      if (currentUser.role !== 'admin') {
-        return renderAccessDenied('admin', 'user-admin', 'Administrator');
-      }
-      return <AdminDashboard currentUser={currentUser} onNavigate={handleNavigate} />;
-    }
-    if (currentPath === '/admin/projects') {
-      if (!currentUser) {
-        return (
-          <LoginPage 
-            onLoginSuccess={(u) => { setCurrentUser(u); handleNavigate('/admin/projects'); }} 
-            onNavigate={handleNavigate} 
-            message="Administrator authentication required."
-          />
-        );
-      }
-      if (currentUser?.role !== 'admin') {
-        return renderAccessDenied('admin', 'user-admin', 'Administrator');
-      }
-      return <ManageProjectsPage onNavigate={handleNavigate} />;
-    }
-    if (currentPath.startsWith('/admin/users')) {
-      if (!currentUser) {
-        return (
-          <LoginPage 
-            onLoginSuccess={(u) => { setCurrentUser(u); handleNavigate('/admin/users'); }} 
-            onNavigate={handleNavigate} 
-            message="Administrator authentication required."
-          />
-        );
-      }
-      if (currentUser?.role !== 'admin') {
-        return renderAccessDenied('admin', 'user-admin', 'Administrator');
-      }
-      return <ManageUsersPage onNavigate={handleNavigate} />;
-    }
-
-    // Papers Page & Details
+    // Research Papers public catalog & details
     if (currentPath.startsWith('/papers')) {
       const parts = currentPath.split('/');
       if (parts.length === 3 && parts[2]) {
@@ -524,67 +338,396 @@ export function App() {
       return <PapersPage currentUser={currentUser} onNavigate={handleNavigate} />;
     }
 
-    // AI Writer Page
-    if (currentPath === '/ai-writer') {
-      return <AiWriterPage currentUser={currentUser} onNavigate={handleNavigate} />;
-    }
-
-    // Publish Project Page (Requires Supervisor/Researcher/Admin)
-    if (currentPath === '/publish-project') {
-      if (!currentUser) {
-        return (
-          <LoginPage 
-            onLoginSuccess={(u) => { setCurrentUser(u); handleNavigate('/publish-project'); }} 
-            onNavigate={handleNavigate} 
-            message="Please log in with supervisor credentials to publish projects."
-          />
-        );
-      }
-      if (currentUser.role !== 'supervisor' && currentUser.role !== 'researcher' && currentUser.role !== 'admin') {
-        return renderAccessDenied('supervisor or researcher', 'user-fahim', 'Dr. Fahim Rahman');
-      }
-      return <PublishProjectPage currentUser={currentUser} onNavigate={handleNavigate} />;
-    }
-
-    // Global Search Page
+    // Global Search
     if (currentPath.startsWith('/search')) {
       const urlParams = new URLSearchParams(currentPath.split('?')[1] || '');
       return <GlobalSearchPage initialQuery={urlParams.get('q') || ''} onNavigate={handleNavigate} />;
     }
 
-    // Static Pages
-    if (currentPath === '/about') {
-      return <AboutPage onNavigate={handleNavigate} />;
+    // ---------------------------------------------------------
+    // ADMIN EXCLUSIVE ROUTES (/admin, Manage Users, Manage Projects, Research Areas, Applications, Reports, Settings)
+    // ProtectedRoute + RoleRoute strictly for ['admin'].
+    // Unauthorized users are immediately redirected to their dashboard with toast.
+    // ---------------------------------------------------------
+    if (currentPath.startsWith('/admin')) {
+      let adminComponent = <AdminDashboard currentUser={currentUser!} onNavigate={handleNavigate} />;
+      if (currentPath === '/admin/projects') {
+        adminComponent = <ManageProjectsPage onNavigate={handleNavigate} />;
+      } else if (currentPath.startsWith('/admin/users')) {
+        adminComponent = <ManageUsersPage onNavigate={handleNavigate} />;
+      } else if (currentPath === '/admin/research-areas') {
+        adminComponent = <ResearchAreasPage onNavigate={handleNavigate} />;
+      } else if (currentPath === '/admin/applications') {
+        adminComponent = <MyApplicationsPage currentUser={currentUser!} onNavigate={handleNavigate} initialFilter="all" />;
+      } else if (currentPath === '/admin/reports') {
+        adminComponent = <AdminDashboard currentUser={currentUser!} onNavigate={handleNavigate} />;
+      } else if (currentPath === '/admin/settings') {
+        adminComponent = <LegalPage />;
+      } else if (currentPath === '/admin/messages') {
+        adminComponent = <ContactPage />;
+      }
+
+      return (
+        <ProtectedRoute
+          currentUser={currentUser}
+          currentPath={currentPath}
+          onNavigate={handleNavigate}
+          message="Administrator authentication required."
+        >
+          <RoleRoute
+            currentUser={currentUser}
+            allowedRoles={['admin']}
+            onNavigate={handleNavigate}
+            onAccessDenied={showAccessDeniedToast}
+          >
+            {adminComponent}
+          </RoleRoute>
+        </ProtectedRoute>
+      );
     }
-    if (currentPath === '/contact' || currentPath === '/admin/messages') {
-      return <ContactPage />;
+
+    // ---------------------------------------------------------
+    // FACULTY / RESEARCHER EXCLUSIVE ROUTES
+    // Researcher Dashboard & Publish Project: Supervisor, Researcher, Admin only.
+    // ---------------------------------------------------------
+    if (currentPath === '/researcher') {
+      return (
+        <ProtectedRoute
+          currentUser={currentUser}
+          currentPath={currentPath}
+          onNavigate={handleNavigate}
+          message="Please log in with faculty supervisor credentials."
+        >
+          <RoleRoute
+            currentUser={currentUser}
+            allowedRoles={['supervisor', 'researcher', 'admin']}
+            onNavigate={handleNavigate}
+            onAccessDenied={showAccessDeniedToast}
+          >
+            <ResearcherDashboard currentUser={currentUser!} onNavigate={handleNavigate} />
+          </RoleRoute>
+        </ProtectedRoute>
+      );
     }
-    if (currentPath === '/legal' || currentPath === '/settings') {
+
+    if (currentPath === '/publish-project') {
+      return (
+        <ProtectedRoute
+          currentUser={currentUser}
+          currentPath={currentPath}
+          onNavigate={handleNavigate}
+          message="Please log in with supervisor credentials to publish projects."
+        >
+          <RoleRoute
+            currentUser={currentUser}
+            allowedRoles={['supervisor', 'researcher', 'admin']}
+            onNavigate={handleNavigate}
+            onAccessDenied={showAccessDeniedToast}
+          >
+            <PublishProjectPage currentUser={currentUser!} onNavigate={handleNavigate} />
+          </RoleRoute>
+        </ProtectedRoute>
+      );
+    }
+
+    // ---------------------------------------------------------
+    // STUDENT EXCLUSIVE ROUTES
+    // Student Welcome Dashboard & Saved Projects: Student, Admin only.
+    // ---------------------------------------------------------
+    if (currentPath === '/dashboard') {
+      return (
+        <ProtectedRoute
+          currentUser={currentUser}
+          currentPath={currentPath}
+          onNavigate={handleNavigate}
+          message="Please log in to access your student dashboard."
+        >
+          <RoleRoute
+            currentUser={currentUser}
+            allowedRoles={['student', 'admin']}
+            onNavigate={handleNavigate}
+            onAccessDenied={showAccessDeniedToast}
+          >
+            <StudentDashboard currentUser={currentUser!} onNavigate={handleNavigate} />
+          </RoleRoute>
+        </ProtectedRoute>
+      );
+    }
+
+    if (currentPath === '/saved') {
+      return (
+        <ProtectedRoute
+          currentUser={currentUser}
+          currentPath={currentPath}
+          onNavigate={handleNavigate}
+          message="Please log in to view your saved projects."
+        >
+          <RoleRoute
+            currentUser={currentUser}
+            allowedRoles={['student', 'admin']}
+            onNavigate={handleNavigate}
+            onAccessDenied={showAccessDeniedToast}
+          >
+            <SavedProjectsPage currentUser={currentUser!} onNavigate={handleNavigate} />
+          </RoleRoute>
+        </ProtectedRoute>
+      );
+    }
+
+    // ---------------------------------------------------------
+    // AUTHENTICATED SHARED USER ROUTES
+    // Applications, My Projects, User Profile, Notifications, Calendar, AI Writer, Workspace
+    // ---------------------------------------------------------
+    if (currentPath.startsWith('/applications')) {
+      const urlParams = new URLSearchParams(currentPath.split('?')[1] || '');
+      const filter = urlParams.get('status') || 'all';
+      return (
+        <ProtectedRoute
+          currentUser={currentUser}
+          currentPath={currentPath}
+          onNavigate={handleNavigate}
+          message="Please log in to access your research applications."
+        >
+          <RoleRoute
+            currentUser={currentUser}
+            allowedRoles={['student', 'researcher', 'supervisor', 'admin']}
+            onNavigate={handleNavigate}
+            onAccessDenied={showAccessDeniedToast}
+          >
+            <MyApplicationsPage currentUser={currentUser!} onNavigate={handleNavigate} initialFilter={filter} />
+          </RoleRoute>
+        </ProtectedRoute>
+      );
+    }
+
+    if (currentPath === '/my-projects') {
+      return (
+        <ProtectedRoute
+          currentUser={currentUser}
+          currentPath={currentPath}
+          onNavigate={handleNavigate}
+          message="Please log in to access your collaborative projects."
+        >
+          <RoleRoute
+            currentUser={currentUser}
+            allowedRoles={['student', 'researcher', 'supervisor', 'admin']}
+            onNavigate={handleNavigate}
+            onAccessDenied={showAccessDeniedToast}
+          >
+            <MyProjectsPage currentUser={currentUser!} onNavigate={handleNavigate} />
+          </RoleRoute>
+        </ProtectedRoute>
+      );
+    }
+
+    if (currentPath === '/profile' || currentPath.startsWith('/u/')) {
+      const targetUserId = getProfileUserIdFromPath();
+      return (
+        <ProtectedRoute
+          currentUser={currentUser}
+          currentPath={currentPath}
+          onNavigate={handleNavigate}
+          message="Please log in to access academic profiles."
+        >
+          <RoleRoute
+            currentUser={currentUser}
+            allowedRoles={['student', 'researcher', 'supervisor', 'admin']}
+            onNavigate={handleNavigate}
+            onAccessDenied={showAccessDeniedToast}
+          >
+            <ProfilePage currentUser={currentUser!} profileUserId={targetUserId} onNavigate={handleNavigate} />
+          </RoleRoute>
+        </ProtectedRoute>
+      );
+    }
+
+    if (currentPath === '/notifications') {
+      return (
+        <ProtectedRoute
+          currentUser={currentUser}
+          currentPath={currentPath}
+          onNavigate={handleNavigate}
+          message="Please log in to view your notifications."
+        >
+          <RoleRoute
+            currentUser={currentUser}
+            allowedRoles={['student', 'researcher', 'supervisor', 'admin']}
+            onNavigate={handleNavigate}
+            onAccessDenied={showAccessDeniedToast}
+          >
+            <NotificationsPage currentUser={currentUser!} onNavigate={handleNavigate} />
+          </RoleRoute>
+        </ProtectedRoute>
+      );
+    }
+
+    if (currentPath === '/calendar') {
+      return (
+        <ProtectedRoute
+          currentUser={currentUser}
+          currentPath={currentPath}
+          onNavigate={handleNavigate}
+          message="Please log in to view the research calendar."
+        >
+          <RoleRoute
+            currentUser={currentUser}
+            allowedRoles={['student', 'researcher', 'supervisor', 'admin']}
+            onNavigate={handleNavigate}
+            onAccessDenied={showAccessDeniedToast}
+          >
+            <CalendarPage currentUser={currentUser!} onNavigate={handleNavigate} />
+          </RoleRoute>
+        </ProtectedRoute>
+      );
+    }
+
+    if (currentPath === '/ai-writer') {
+      return (
+        <ProtectedRoute
+          currentUser={currentUser}
+          currentPath={currentPath}
+          onNavigate={handleNavigate}
+          message="Please log in to access the AI Paper Writer."
+        >
+          <RoleRoute
+            currentUser={currentUser}
+            allowedRoles={['student', 'researcher', 'supervisor', 'admin']}
+            onNavigate={handleNavigate}
+            onAccessDenied={showAccessDeniedToast}
+          >
+            <AiWriterPage currentUser={currentUser!} onNavigate={handleNavigate} />
+          </RoleRoute>
+        </ProtectedRoute>
+      );
+    }
+
+    // Project workspace sub-routes
+    if (currentPath.includes('/discussion')) {
+      return (
+        <ProtectedRoute
+          currentUser={currentUser}
+          currentPath={currentPath}
+          onNavigate={handleNavigate}
+          message="Please log in to join project discussions."
+        >
+          <RoleRoute
+            currentUser={currentUser}
+            allowedRoles={['student', 'researcher', 'supervisor', 'admin']}
+            onNavigate={handleNavigate}
+            onAccessDenied={showAccessDeniedToast}
+          >
+            <ProjectDiscussionPage projectId={getProjectIdFromPath()} currentUser={currentUser!} onNavigate={handleNavigate} />
+          </RoleRoute>
+        </ProtectedRoute>
+      );
+    }
+
+    if (currentPath.includes('/progress')) {
+      return (
+        <ProtectedRoute
+          currentUser={currentUser}
+          currentPath={currentPath}
+          onNavigate={handleNavigate}
+          message="Please log in to view project progress milestones."
+        >
+          <RoleRoute
+            currentUser={currentUser}
+            allowedRoles={['student', 'researcher', 'supervisor', 'admin']}
+            onNavigate={handleNavigate}
+            onAccessDenied={showAccessDeniedToast}
+          >
+            <ProjectProgressPage projectId={getProjectIdFromPath()} currentUser={currentUser!} onNavigate={handleNavigate} />
+          </RoleRoute>
+        </ProtectedRoute>
+      );
+    }
+
+    if (currentPath.includes('/team')) {
+      return (
+        <ProtectedRoute
+          currentUser={currentUser}
+          currentPath={currentPath}
+          onNavigate={handleNavigate}
+          message="Please log in to view project team members."
+        >
+          <RoleRoute
+            currentUser={currentUser}
+            allowedRoles={['student', 'researcher', 'supervisor', 'admin']}
+            onNavigate={handleNavigate}
+            onAccessDenied={showAccessDeniedToast}
+          >
+            <ProjectTeamPage projectId={getProjectIdFromPath()} currentUser={currentUser!} onNavigate={handleNavigate} />
+          </RoleRoute>
+        </ProtectedRoute>
+      );
+    }
+
+    if (currentPath.includes('/files')) {
+      return (
+        <ProtectedRoute
+          currentUser={currentUser}
+          currentPath={currentPath}
+          onNavigate={handleNavigate}
+          message="Please log in to view project files."
+        >
+          <RoleRoute
+            currentUser={currentUser}
+            allowedRoles={['student', 'researcher', 'supervisor', 'admin']}
+            onNavigate={handleNavigate}
+            onAccessDenied={showAccessDeniedToast}
+          >
+            <ProjectDiscussionPage projectId={getProjectIdFromPath()} currentUser={currentUser!} onNavigate={handleNavigate} />
+          </RoleRoute>
+        </ProtectedRoute>
+      );
+    }
+
+    if (currentPath === '/settings') {
       return <LegalPage />;
     }
 
-    // Default Fallback: Landing Page
+    // Default Fallback
     return <LandingPage onNavigate={handleNavigate} onOpenSearch={() => setSearchModalOpen(true)} />;
   };
 
+  if (authStatus === 'loading') {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center bg-white space-y-4">
+        <div className="w-12 h-12 border-4 border-[#2563EB] border-t-transparent rounded-full animate-spin" />
+        <p className="text-xs font-bold text-[#0B2A55] tracking-wide animate-pulse">
+          Verifying security credentials…
+        </p>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen flex flex-col bg-[#F4F8FD] text-[#0B1F4B] font-sans antialiased">
+      {/* Global Academic Verification Modal (Mounts once via Portal when authStatus === 'needsProfile') */}
+      <CompleteVerificationModal
+        onSuccessRedirect={(role) => {
+          const target = role === 'admin' 
+            ? '/admin' 
+            : role === 'supervisor' || role === 'researcher' 
+              ? '/researcher' 
+              : '/dashboard';
+          handleNavigate(target);
+        }}
+      />
+
       {/* Top Navbar */}
       <Navbar
         currentUser={currentUser}
         onNavigate={handleNavigate}
         currentPath={currentPath}
         onOpenSearch={() => setSearchModalOpen(true)}
-        onSwitchUser={handleSwitchUser}
         onLogout={handleLogout}
         unreadCount={unreadNotifications}
       />
 
       {/* Main Body */}
       {isAppShellRoute && currentUser ? (
-        /* App Shell Layout for Logged-In Pages (Pages 7-20) */
         <div className="flex-1 flex flex-col min-h-[calc(100vh-4rem)]">
-          {/* Top Bar with dynamic search input, notifications, mascot */}
           <TopBar
             currentUser={currentUser}
             currentPath={currentPath}
@@ -595,7 +738,6 @@ export function App() {
           />
 
           <div className="flex-1 flex">
-            {/* Role-Specific or Workspace Sidebar */}
             <Sidebar
               currentUser={currentUser}
               currentPath={currentPath}
@@ -604,14 +746,12 @@ export function App() {
               isProjectWorkspace={isWorkspaceContext}
             />
 
-            {/* Scrollable Main Content Area */}
             <main ref={mainContentRef} className="flex-1 p-4 sm:p-6 lg:p-8 overflow-y-auto max-w-7xl mx-auto w-full">
               {renderPage()}
             </main>
           </div>
         </div>
       ) : (
-        /* Public Full-Width Layout (Landing, Login, Register, Research Areas, About, etc.) */
         <main className="flex-1">
           {renderPage()}
         </main>
@@ -627,36 +767,36 @@ export function App() {
         onNavigate={handleNavigate}
       />
 
-      {/* Live In-App Notification Toast */}
+      {/* Live In-App Notification / Route Guard Access Denied Toast */}
       {activeToast && (
-        <div className="fixed top-20 right-4 z-50 max-w-sm w-full bg-white border border-[#0B6BE6]/40 shadow-2xl rounded-2xl p-4 flex items-start gap-3 animate-fade-in">
-          <div className="w-10 h-10 rounded-xl bg-[#DDF5EA] text-[#0E9F6E] flex items-center justify-center shrink-0 shadow-2xs">
-            <Bell className="w-5 h-5" />
+        <div className={`fixed top-20 right-4 z-50 max-w-sm w-full bg-white border shadow-2xl rounded-2xl p-4 flex items-start gap-3 animate-fade-in ${
+          activeToast.isError ? 'border-[#E5393C]/50' : 'border-[#0B6BE6]/40'
+        }`}>
+          <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 shadow-2xs ${
+            activeToast.isError ? 'bg-[#FBE4E4] text-[#E5393C]' : 'bg-[#DDF5EA] text-[#0E9F6E]'
+          }`}>
+            {activeToast.isError ? <ShieldAlert className="w-5 h-5" /> : <Bell className="w-5 h-5" />}
           </div>
           <div className="flex-1 min-w-0 space-y-1">
             <div className="flex items-center justify-between gap-1">
               <h5 className="font-bold text-xs text-[#0B2A55] truncate">{activeToast.title}</h5>
-              <span className="text-[10px] text-gray-400 font-medium">Just now</span>
+              <span className="text-[10px] text-gray-400 font-medium">Notice</span>
             </div>
             <p className="text-[11px] text-gray-600 line-clamp-2 leading-relaxed">{activeToast.body}</p>
-            <div className="flex items-center gap-3 pt-1">
-              <button
-                onClick={() => {
-                  if (activeToast.link) handleNavigate(activeToast.link);
-                  setActiveToast(null);
-                }}
-                className="text-xs font-bold text-[#0B6BE6] hover:underline cursor-pointer flex items-center gap-1"
-              >
-                <span>View</span>
-                <ArrowRight className="w-3 h-3" />
-              </button>
-              <button
-                onClick={() => setActiveToast(null)}
-                className="text-xs text-gray-400 hover:text-gray-600 cursor-pointer"
-              >
-                Dismiss
-              </button>
-            </div>
+            {activeToast.link && (
+              <div className="flex items-center gap-3 pt-1">
+                <button
+                  onClick={() => {
+                    if (activeToast.link) handleNavigate(activeToast.link);
+                    setActiveToast(null);
+                  }}
+                  className="text-xs font-bold text-[#0B6BE6] hover:underline cursor-pointer flex items-center gap-1"
+                >
+                  <span>View</span>
+                  <ArrowRight className="w-3 h-3" />
+                </button>
+              </div>
+            )}
           </div>
           <button
             onClick={() => setActiveToast(null)}
@@ -668,6 +808,14 @@ export function App() {
         </div>
       )}
     </div>
+  );
+}
+
+export function App() {
+  return (
+    <AuthProvider>
+      <AppContent />
+    </AuthProvider>
   );
 }
 

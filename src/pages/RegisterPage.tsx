@@ -15,8 +15,7 @@ import { User, UserRole } from '../types';
 import { authService } from '../services/authService';
 import { ASSETS } from '../data/assets';
 import { Logo } from '../components/common/Logo';
-import { OAuthModal } from '../components/common/OAuthModal';
-import { signInWithSocialOAuth, SocialAuthProfileData } from '../services/firebaseAuth';
+import { useAuth } from '../contexts/AuthContext';
 
 interface RegisterPageProps {
   onNavigate: (path: string) => void;
@@ -29,10 +28,8 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({
   onRegistered,
   onLoginSuccess
 }) => {
-  const [oauthProvider, setOauthProvider] = useState<'Google' | 'GitHub' | null>(null);
-  const [socialProfileData, setSocialProfileData] = useState<SocialAuthProfileData | null>(null);
+  const { signInWithSocial } = useAuth();
   const [activeSocialLoading, setActiveSocialLoading] = useState<'Google' | 'GitHub' | null>(null);
-  const [isOAuthOpen, setIsOAuthOpen] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [toastType, setToastType] = useState<'info' | 'error' | 'success'>('info');
 
@@ -108,54 +105,21 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({
     }
   };
 
-  const handleSocialAuth = async (provider: 'Google' | 'GitHub') => {
+  const handleStartSocialAuth = async (provider: 'Google' | 'GitHub') => {
     setError('');
     setActiveSocialLoading(provider);
 
     try {
-      const result = await signInWithSocialOAuth(provider);
+      const result = await signInWithSocial(provider);
       setActiveSocialLoading(null);
 
-      if (result.redirecting) {
-        showToast(`Redirecting to ${provider}...`, 'info');
-        return;
+      if (!result.success && !result.cancelled) {
+        setError(result.error || 'Sign-in failed. Please try again.');
       }
-
-      if (result.cancelled) {
-        showToast('Sign-in cancelled', 'info');
-        return;
-      }
-
-      if (result.notConfigured) {
-        showToast(result.error || `${provider} sign-in is not configured`, 'error');
-        return;
-      }
-
-      if (!result.success) {
-        showToast(result.error || `${provider} sign-in failed`, 'error');
-        return;
-      }
-
-      // If returning user: logged in directly
-      if (!result.isNewUser && result.user) {
-        showToast(`Welcome back, ${result.user.name}!`, 'success');
-        if (onLoginSuccess) {
-          onLoginSuccess(result.user);
-        } else {
-          onNavigate(result.user.role === 'admin' ? '/admin' : result.user.role === 'supervisor' || result.user.role === 'researcher' ? '/researcher' : '/dashboard');
-        }
-        return;
-      }
-
-      // If new user: open Complete Profile modal prefilled with provider info
-      if (result.isNewUser && result.profileData) {
-        setOauthProvider(provider);
-        setSocialProfileData(result.profileData);
-        setIsOAuthOpen(true);
-      }
-    } catch (err: any) {
+      // Never navigate inside sign-in handler: AuthProvider state machine handles navigation!
+    } catch {
       setActiveSocialLoading(null);
-      showToast(err?.message || `Failed to authenticate with ${provider}.`, 'error');
+      setError('Sign-in failed. Please try again.');
     }
   };
 
@@ -269,8 +233,11 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({
                   <input
                     type="text"
                     value={universityId}
-                    onChange={(e) => setUniversityId(e.target.value)}
-                    placeholder="e.g. 2022-1-60-001"
+                    onChange={(e) => {
+                      const clean = e.target.value.toUpperCase().replace(/\s+/g, '');
+                      setUniversityId(clean);
+                    }}
+                    placeholder="e.g. CSE02807185"
                     className="w-full pl-10 pr-4 py-2 rounded-lg border border-gray-300 text-sm text-gray-800 placeholder-gray-400 focus:outline-hidden focus:border-[#1565E8] focus:ring-1 focus:ring-[#1565E8] transition-all"
                   />
                 </div>
@@ -442,12 +409,13 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({
             <div className="space-y-2.5">
               <button
                 type="button"
-                onClick={() => handleSocialAuth('Google')}
+                onClick={() => handleStartSocialAuth('Google')}
                 disabled={activeSocialLoading !== null}
-                className="w-full py-2.5 px-4 bg-white hover:bg-gray-50 text-gray-700 font-semibold text-xs sm:text-sm rounded-xl border border-gray-300 shadow-2xs hover:shadow-xs transition-all flex items-center justify-center gap-3 cursor-pointer hover:border-gray-400 disabled:opacity-60"
+                aria-label="Continue with Google"
+                className="w-full h-11 px-4 bg-white hover:bg-gray-50 active:bg-gray-100 text-gray-700 font-semibold text-xs sm:text-sm rounded-xl border border-gray-300 shadow-2xs hover:shadow-xs transition-all flex items-center justify-center gap-3 cursor-pointer hover:border-gray-400 focus:outline-hidden focus:ring-2 focus:ring-[#1565E8]/40 focus:border-[#1565E8] disabled:opacity-60 disabled:cursor-not-allowed"
               >
                 {activeSocialLoading === 'Google' ? (
-                  <div className="w-4 h-4 border-2 border-gray-300 border-t-[#4285F4] rounded-full animate-spin" />
+                  <div className="w-4 h-4 border-2 border-gray-400 border-t-[#4285F4] rounded-full animate-spin" />
                 ) : (
                   <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24">
                     <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
@@ -461,12 +429,13 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({
 
               <button
                 type="button"
-                onClick={() => handleSocialAuth('GitHub')}
+                onClick={() => handleStartSocialAuth('GitHub')}
                 disabled={activeSocialLoading !== null}
-                className="w-full py-2.5 px-4 bg-white hover:bg-gray-50 text-gray-800 font-semibold text-xs sm:text-sm rounded-xl border border-gray-300 shadow-2xs hover:shadow-xs transition-all flex items-center justify-center gap-3 cursor-pointer hover:border-gray-400 disabled:opacity-60"
+                aria-label="Continue with GitHub"
+                className="w-full h-11 px-4 bg-white hover:bg-gray-50 active:bg-gray-100 text-gray-800 font-semibold text-xs sm:text-sm rounded-xl border border-gray-300 shadow-2xs hover:shadow-xs transition-all flex items-center justify-center gap-3 cursor-pointer hover:border-gray-400 focus:outline-hidden focus:ring-2 focus:ring-[#1565E8]/40 focus:border-[#1565E8] disabled:opacity-60 disabled:cursor-not-allowed"
               >
                 {activeSocialLoading === 'GitHub' ? (
-                  <div className="w-4 h-4 border-2 border-gray-300 border-t-gray-900 rounded-full animate-spin" />
+                  <div className="w-4 h-4 border-2 border-gray-400 border-t-gray-900 rounded-full animate-spin" />
                 ) : (
                   <svg className="w-4 h-4 fill-current text-gray-900 shrink-0" viewBox="0 0 24 24">
                     <path fillRule="evenodd" clipRule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.53 1.032 1.53 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z" />
@@ -532,27 +501,6 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({
         </div>
       )}
 
-      {/* Complete Profile Modal for Authenticated Social Users */}
-      <OAuthModal
-        isOpen={isOAuthOpen}
-        onClose={() => {
-          setIsOAuthOpen(false);
-          setOauthProvider(null);
-          setSocialProfileData(null);
-        }}
-        provider={oauthProvider}
-        profileData={socialProfileData}
-        onSuccess={(user) => {
-          setIsOAuthOpen(false);
-          setOauthProvider(null);
-          setSocialProfileData(null);
-          if (onLoginSuccess) {
-            onLoginSuccess(user);
-          } else {
-            onNavigate(user.role === 'admin' ? '/admin' : user.role === 'supervisor' || user.role === 'researcher' ? '/researcher' : '/dashboard');
-          }
-        }}
-      />
     </div>
   );
 };

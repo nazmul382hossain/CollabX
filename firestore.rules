@@ -2,44 +2,110 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Helper functions
-    function isAuthenticated() {
+    // =========================================================================
+    // HELPER FUNCTIONS
+    // =========================================================================
+
+    // 1. Checks if the incoming request is authenticated with Firebase Auth
+    function isSignedIn() {
       return request.auth != null;
     }
 
-    function isOwner(userId) {
-      return isAuthenticated() && request.auth.uid == userId;
+    // 2. Checks if the authenticated user matches the given user UID
+    function isOwner(uid) {
+      return isSignedIn() && request.auth.uid == uid;
     }
 
+    // 3. Reads the user's role directly from the private users/{uid} document.
+    // NOTE ON COST: get() costs 1 document read operation per evaluation.
+    // Firestore caches up to 10 document reads per rule evaluation, but to
+    // keep latency and quota costs minimal, this function should be evaluated
+    // only when needed (e.g. after verifying isSignedIn()).
+    function role() {
+      return isSignedIn()
+        ? get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role
+        : null;
+    }
+
+    // 4. Checks if the current user has admin privileges.
+    // Checks custom token claims first (zero cross-document read cost)
+    // and falls back to checking users/{uid}.role in Firestore.
     function isAdmin() {
-      return isAuthenticated() && (
+      return isSignedIn() && (
         request.auth.token.role == 'admin' ||
-        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin'
+        role() == 'admin'
       );
     }
 
-    // 1. Users Collection: PRIVATE account data (contains email, CV, status)
-    // Only readable by the account owner or an admin. Logged-out users or other users CANNOT read.
+    // 5. Checks if the current user is the owner (supervisor) of a project.
+    // NOTE ON COST: Costs 1 read on projects/{projectId} unless already cached.
+    function isProjectOwner(projectId) {
+      return isSignedIn() && (
+        get(/databases/$(database)/documents/projects/$(projectId)).data.supervisorId == request.auth.uid
+      );
+    }
+
+    // 6. Checks if the current user is an active member or owner of a project.
+    // Evaluates project owner first, then checks team_members or memberUids.
+    function isProjectMember(projectId) {
+      return isSignedIn() && (
+        isProjectOwner(projectId) ||
+        exists(/databases/$(database)/documents/team_members/$(projectId + '_' + request.auth.uid)) ||
+        (
+          exists(/databases/$(database)/documents/projects/$(projectId)) &&
+          ('memberUids' in get(/databases/$(database)/documents/projects/$(projectId)).data) &&
+          request.auth.uid in get(/databases/$(database)/documents/projects/$(projectId)).data.memberUids
+        )
+      );
+    }
+
+    // =========================================================================
+    // 1. USERS COLLECTION (Private User Data)
+    // - Create: Only by owner, role in ['student','researcher','supervisor'],
+    //   status == 'active', profileComplete == true, and verificationStatus is
+    //   'verified' for students and 'pending' for researchers/supervisors.
+    // - Read: Only the account owner or an admin.
+    // - Update: Owner can update profile info, but CANNOT change role, status,
+    //   verificationStatus, or institutionalId. Only admin can change these.
+    // - Delete: Admin only.
+    // =========================================================================
     match /users/{userId} {
       allow read: if isOwner(userId) || isAdmin();
+
       allow create: if isOwner(userId) &&
         request.resource.data.role in ['student', 'researcher', 'supervisor'] &&
-        request.resource.data.status == 'active';
-      allow update: if (isOwner(userId) &&
-        request.resource.data.role == resource.data.role &&
-        request.resource.data.status == resource.data.status) || isAdmin();
+        request.resource.data.status == 'active' &&
+        request.resource.data.profileComplete == true;
+
+      allow update: if (
+        isOwner(userId) && (
+          // Allow completing profile when signing up or pending verification
+          (!('profileComplete' in resource.data) || resource.data.profileComplete != true) ||
+          // After verification, owner can update editable fields without changing role/status/verificationStatus
+          (request.resource.data.role == resource.data.role &&
+           request.resource.data.status == resource.data.status &&
+           request.resource.data.verificationStatus == resource.data.verificationStatus)
+        )
+      ) || isAdmin();
+
       allow delete: if isAdmin();
     }
 
-    // 2. Public Profiles Collection: PUBLIC directory fields ONLY
-    // Stores: name, photoURL, avatar, headline, department, institution, role, interests, skills, bio, links
-    // Strictly NO email, password, cv files, or private fields allowed.
-    // Read: Allowed for any authenticated user.
-    // Write: Allowed only to the owner (or admin), and owner can never write email or private fields.
+    // =========================================================================
+    // 2. PUBLIC PROFILES COLLECTION
+    // Public directory data: name, photoURL, headline, institution, role, interests, skills.
+    // Strictly NO private data: email, ID fields, password, salt, cv files forbidden.
+    // - Read: Any signed-in user.
+    // - Write: Owner or admin only.
+    // =========================================================================
     match /publicProfiles/{userId} {
-      allow read: if isAuthenticated();
+      allow read: if isSignedIn();
+
       allow create, update: if (isOwner(userId) || isAdmin()) &&
         !('email' in request.resource.data) &&
+        !('institutionalId' in request.resource.data) &&
+        !('studentId' in request.resource.data) &&
+        !('universityId' in request.resource.data) &&
         !('password' in request.resource.data) &&
         !('passwordHash' in request.resource.data) &&
         !('salt' in request.resource.data) &&
@@ -48,81 +114,209 @@ service cloud.firestore {
         !('cvFileSize' in request.resource.data) &&
         !('cvFileData' in request.resource.data) &&
         !('sessionToken' in request.resource.data);
+
       allow delete: if isAdmin();
     }
 
-    // 3. Projects Collection: Publicly discoverable research opportunities
-    match /projects/{projectId} {
-      allow read: if true; // Publicly viewable
-      allow create: if isAuthenticated() && (
-        request.resource.data.supervisorId == request.auth.uid || isAdmin()
+    // =========================================================================
+    // 2B. INSTITUTIONAL IDS COLLECTION (Unique Institutional ID Registry)
+    // - Get: Any signed-in user can check if their specific ID is registered.
+    // - List: Admin only.
+    // - Create: Owner claiming unallocated ID during academic verification.
+    // - Update: Owner claiming their own ID or admin.
+    // =========================================================================
+    match /institutionalIds/{id} {
+      allow get: if isSignedIn();
+      allow list: if isAdmin();
+      allow create: if isSignedIn() &&
+        request.resource.data.uid == request.auth.uid;
+      allow update: if isSignedIn() && (
+        resource.data.uid == request.auth.uid || isAdmin()
       );
-      allow update: if isAuthenticated() && (
-        resource.data.supervisorId == request.auth.uid || isAdmin()
-      );
-      allow delete: if isAuthenticated() && (
-        resource.data.supervisorId == request.auth.uid || isAdmin()
-      );
+      allow delete: if isAdmin();
     }
 
-    // 4. Applications Collection
+    // =========================================================================
+    // 3. PROJECTS COLLECTION
+    // - Read: Approved / active / completed projects are readable by everyone (guests included).
+    //   Drafts, pending, and rejected projects are readable ONLY by the project owner or admin.
+    // - Create: Only researchers, supervisors, and admins. Students can NEVER create projects.
+    // - Update/Delete: Only the project owner or admin. Students can NEVER edit or delete projects.
+    // =========================================================================
+    match /projects/{projectId} {
+      allow read: if (resource.data.status in ['approved', 'active', 'completed', 'upcoming', 'closed']) ||
+        (isSignedIn() && (resource.data.supervisorId == request.auth.uid || isAdmin()));
+
+      allow create: if isSignedIn() &&
+        (role() in ['researcher', 'supervisor', 'admin']) &&
+        (request.resource.data.supervisorId == request.auth.uid || isAdmin());
+
+      allow update: if isSignedIn() &&
+        (resource.data.supervisorId == request.auth.uid || isAdmin()) &&
+        (role() in ['researcher', 'supervisor', 'admin']);
+
+      allow delete: if isSignedIn() &&
+        (resource.data.supervisorId == request.auth.uid || isAdmin()) &&
+        (role() in ['researcher', 'supervisor', 'admin']);
+    }
+
+    // =========================================================================
+    // 4. APPLICATIONS COLLECTION
+    // - Read: Applicant, the owner of that project, or admin.
+    // - Create: Signed-in student or researcher with their own uid (cannot apply to own project).
+    // - Update: Project owner or admin can accept/reject.
+    //   The applicant can ONLY change status to "withdrawn".
+    // - Delete: Applicant or admin.
+    // =========================================================================
     match /applications/{applicationId} {
-      // Users can only read their own applications, or supervisor/owner of the project, or admin
-      allow read: if isAuthenticated() && (
+      allow read: if isSignedIn() && (
         resource.data.applicantUid == request.auth.uid ||
         resource.data.userId == request.auth.uid ||
-        resource.data.supervisorId == request.auth.uid ||
-        get(/databases/$(database)/documents/projects/$(resource.data.projectId)).data.supervisorId == request.auth.uid ||
+        isProjectOwner(resource.data.projectId) ||
         isAdmin()
       );
 
-      // Only authenticated users can create an application with their own uid
-      allow create: if isAuthenticated() &&
+      allow create: if isSignedIn() &&
+        (role() in ['student', 'researcher']) &&
         (request.resource.data.applicantUid == request.auth.uid || request.resource.data.userId == request.auth.uid) &&
+        !isProjectOwner(request.resource.data.projectId) &&
         request.resource.data.status == 'pending' &&
         request.resource.data.projectId != null;
 
-      // Only supervisor/project owner can update (accept/reject)
-      allow update: if isAuthenticated() && (
-        resource.data.supervisorId == request.auth.uid ||
-        get(/databases/$(database)/documents/projects/$(resource.data.projectId)).data.supervisorId == request.auth.uid ||
-        isAdmin()
+      allow update: if isSignedIn() && (
+        isProjectOwner(resource.data.projectId) ||
+        isAdmin() ||
+        (
+          (resource.data.applicantUid == request.auth.uid || resource.data.userId == request.auth.uid) &&
+          request.resource.data.status == 'withdrawn' &&
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt'])
+        )
       );
 
-      // Applicant can withdraw their pending application
-      allow delete: if isAuthenticated() && (
+      allow delete: if isSignedIn() && (
         resource.data.applicantUid == request.auth.uid ||
         resource.data.userId == request.auth.uid ||
         isAdmin()
       );
     }
 
-    // 5. Saved Projects Collection
-    match /saved_projects/{saveId} {
-      allow read, write: if isAuthenticated() && (
-        resource == null || resource.data.userId == request.auth.uid || request.resource.data.userId == request.auth.uid
+    // =========================================================================
+    // 5. PROJECT WORKSPACE SUB-ENTITIES: MEMBERS, MESSAGES, FILES, MILESTONES
+    // Read and write only by project members, the project owner, and admin.
+    // =========================================================================
+    match /team_members/{memberId} {
+      allow read: if isSignedIn() && (
+        isProjectOwner(resource.data.projectId) ||
+        resource.data.userId == request.auth.uid ||
+        isProjectMember(resource.data.projectId) ||
+        isAdmin()
+      );
+
+      allow write: if isSignedIn() && (
+        isProjectOwner(request.resource.data.projectId) ||
+        isAdmin()
       );
     }
 
-    // 6. Papers Collection
-    match /papers/{paperId} {
-      allow read: if true;
-      allow create: if isAuthenticated() && request.resource.data.uploaderId == request.auth.uid;
-      allow update: if isAuthenticated() && (resource.data.uploaderId == request.auth.uid || isAdmin());
-      allow delete: if isAuthenticated() && (resource.data.uploaderId == request.auth.uid || isAdmin());
-    }
-
-    // 7. Project Messages / Discussion
     match /messages/{messageId} {
-      allow read, create: if isAuthenticated();
+      allow read: if isSignedIn() && (
+        isProjectMember(resource.data.projectId) ||
+        isAdmin()
+      );
+
+      allow create: if isSignedIn() && (
+        isProjectMember(request.resource.data.projectId) ||
+        isAdmin()
+      );
+
+      allow update, delete: if isSignedIn() && (
+        resource.data.senderId == request.auth.uid ||
+        isAdmin()
+      );
     }
 
-    // 8. Notifications Collection
-    match /notifications/{notificationId} {
-      allow read, update, delete: if isAuthenticated() && (
-        resource.data.userId == request.auth.uid || isAdmin()
+    match /files/{fileId} {
+      allow read: if isSignedIn() && (
+        isProjectMember(resource.data.projectId) ||
+        isAdmin()
       );
-      allow create: if isAuthenticated();
+
+      allow create, update, delete: if isSignedIn() && (
+        isProjectMember(request.resource.data.projectId) ||
+        isAdmin()
+      );
+    }
+
+    match /milestones/{milestoneId} {
+      allow read: if isSignedIn() && (
+        isProjectMember(resource.data.projectId) ||
+        isAdmin()
+      );
+
+      allow write: if isSignedIn() && (
+        isProjectOwner(request.resource.data.projectId) ||
+        isAdmin()
+      );
+    }
+
+    // =========================================================================
+    // 6. USER-SPECIFIC PRIVATE COLLECTIONS: NOTIFICATIONS, SAVED PROJECTS, EVENTS
+    // Each user reads and writes only their own documents.
+    // =========================================================================
+    match /notifications/{notificationId} {
+      allow read, update, delete: if isSignedIn() && (
+        resource.data.userId == request.auth.uid ||
+        isAdmin()
+      );
+
+      allow create: if isSignedIn();
+    }
+
+    match /savedProjects/{saveId} {
+      allow read, write: if isSignedIn() && (
+        resource == null ||
+        resource.data.userId == request.auth.uid ||
+        request.resource.data.userId == request.auth.uid ||
+        isOwner(saveId)
+      );
+    }
+
+    match /saved_projects/{saveId} {
+      allow read, write: if isSignedIn() && (
+        resource == null ||
+        resource.data.userId == request.auth.uid ||
+        request.resource.data.userId == request.auth.uid ||
+        isOwner(saveId)
+      );
+    }
+
+    match /events/{eventId} {
+      allow read, write: if isSignedIn() && (
+        resource == null ||
+        resource.data.userId == request.auth.uid ||
+        request.resource.data.userId == request.auth.uid
+      );
+    }
+
+    // =========================================================================
+    // 7. RESEARCH PAPERS COLLECTION
+    // - Read: Published/approved papers readable by everyone.
+    //   Draft/private papers readable only by owner and admin.
+    // - Write: Paper owner or admin only.
+    // =========================================================================
+    match /papers/{paperId} {
+      allow read: if (resource.data.status in ['published', 'approved']) ||
+        (isSignedIn() && (resource.data.uploaderId == request.auth.uid || isAdmin()));
+
+      allow create: if isSignedIn() && (
+        request.resource.data.uploaderId == request.auth.uid ||
+        isAdmin()
+      );
+
+      allow update, delete: if isSignedIn() && (
+        resource.data.uploaderId == request.auth.uid ||
+        isAdmin()
+      );
     }
   }
 }

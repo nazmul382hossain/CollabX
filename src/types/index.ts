@@ -26,6 +26,11 @@ export interface User {
     website?: string;
   };
   verified?: boolean;
+  profileComplete?: boolean;
+  institutionalId?: string;
+  verificationStatus?: 'verified' | 'pending' | 'rejected';
+  emailVerified?: boolean;
+  photoURL?: string;
   cvUrl?: string;
   cvFileName?: string;
   cvFileSize?: string;

@@ -14,16 +14,12 @@ import {
   ContactMessage 
 } from '../types';
 import { ASSETS } from './assets';
-import { DEFAULT_PASSWORD_HASH, DEFAULT_SALT } from '../services/cryptoUtils';
 
 export const MOCK_USERS: User[] = [
   {
     id: 'user-ash',
     name: 'Ash Ketchum',
-    email: 'ash@collabx.test',
-    passwordHash: DEFAULT_PASSWORD_HASH,
-    salt: DEFAULT_SALT,
-    universityId: '2022-1-60-001',
+    email: 'ash@portcity.edu.bd',    universityId: '2022-1-60-001',
     role: 'student',
     status: 'active',
     avatar: ASSETS.avatars.ash,
@@ -44,10 +40,7 @@ export const MOCK_USERS: User[] = [
   {
     id: 'user-misty',
     name: 'Misty Williams',
-    email: 'misty@collabx.test',
-    passwordHash: DEFAULT_PASSWORD_HASH,
-    salt: DEFAULT_SALT,
-    universityId: '2022-1-60-002',
+    email: 'misty@portcity.edu.bd',    universityId: '2022-1-60-002',
     role: 'student',
     status: 'active',
     avatar: ASSETS.avatars.misty,
@@ -66,10 +59,7 @@ export const MOCK_USERS: User[] = [
   {
     id: 'user-brock',
     name: 'Brock Harrison',
-    email: 'brock@collabx.test',
-    passwordHash: DEFAULT_PASSWORD_HASH,
-    salt: DEFAULT_SALT,
-    universityId: '2021-3-60-045',
+    email: 'brock@portcity.edu.bd',    universityId: '2021-3-60-045',
     role: 'researcher',
     status: 'active',
     avatar: ASSETS.avatars.brock,
@@ -88,10 +78,7 @@ export const MOCK_USERS: User[] = [
   {
     id: 'user-gary',
     name: 'Gary Oak',
-    email: 'gary@collabx.test',
-    passwordHash: DEFAULT_PASSWORD_HASH,
-    salt: DEFAULT_SALT,
-    universityId: '2022-1-60-003',
+    email: 'gary@portcity.edu.bd',    universityId: '2022-1-60-003',
     role: 'student',
     status: 'inactive',
     avatar: ASSETS.avatars.gary,
@@ -110,10 +97,7 @@ export const MOCK_USERS: User[] = [
   {
     id: 'user-fahim',
     name: 'Dr. Fahim Rahman',
-    email: 'fahim@collabx.test',
-    passwordHash: DEFAULT_PASSWORD_HASH,
-    salt: DEFAULT_SALT,
-    universityId: 'FAC-CSE-001',
+    email: 'fahim@portcity.edu.bd',    universityId: 'FAC-CSE-001',
     role: 'supervisor',
     status: 'active',
     avatar: ASSETS.avatars.drFahim,
@@ -134,10 +118,7 @@ export const MOCK_USERS: User[] = [
   {
     id: 'user-sarhan',
     name: 'Dr. Sarhan',
-    email: 'sarhan@collabx.test',
-    passwordHash: DEFAULT_PASSWORD_HASH,
-    salt: DEFAULT_SALT,
-    universityId: 'FAC-CSE-002',
+    email: 'sarhan@portcity.edu.bd',    universityId: 'FAC-CSE-002',
     role: 'supervisor',
     status: 'active',
     avatar: ASSETS.avatars.drSarhan,
@@ -157,10 +138,7 @@ export const MOCK_USERS: User[] = [
   {
     id: 'user-nazmul',
     name: 'Dr. Nazmul Hossain',
-    email: 'nazmul@collabx.test',
-    passwordHash: DEFAULT_PASSWORD_HASH,
-    salt: DEFAULT_SALT,
-    universityId: 'FAC-CSE-003',
+    email: 'nazmul@portcity.edu.bd',    universityId: 'FAC-CSE-003',
     role: 'supervisor',
     status: 'active',
     avatar: ASSETS.avatars.drNazmul,
@@ -179,10 +157,7 @@ export const MOCK_USERS: User[] = [
   {
     id: 'user-sabbir',
     name: 'Dr. Sabbir Islam',
-    email: 'sabbir@collabx.test',
-    passwordHash: DEFAULT_PASSWORD_HASH,
-    salt: DEFAULT_SALT,
-    universityId: 'FAC-CSE-004',
+    email: 'sabbir@portcity.edu.bd',    universityId: 'FAC-CSE-004',
     role: 'supervisor',
     status: 'active',
     avatar: ASSETS.avatars.drSabbir,
@@ -202,10 +177,7 @@ export const MOCK_USERS: User[] = [
   {
     id: 'user-mislam',
     name: 'Dr. M. Islam',
-    email: 'mislam@collabx.test',
-    passwordHash: DEFAULT_PASSWORD_HASH,
-    salt: DEFAULT_SALT,
-    universityId: 'FAC-EEE-001',
+    email: 'mislam@portcity.edu.bd',    universityId: 'FAC-EEE-001',
     role: 'supervisor',
     status: 'active',
     avatar: ASSETS.avatars.drMIslam,
@@ -220,28 +192,6 @@ export const MOCK_USERS: User[] = [
     },
     verified: true,
     createdAt: '2025-06-10T10:00:00Z'
-  },
-  {
-    id: 'user-admin',
-    name: 'CollabX Administrator',
-    email: 'admin@collabx.test',
-    passwordHash: DEFAULT_PASSWORD_HASH,
-    salt: DEFAULT_SALT,
-    universityId: 'ADM-001',
-    role: 'admin',
-    status: 'active',
-    avatar: ASSETS.avatars.admin,
-    headline: 'System Administrator & Portal Moderator',
-    department: 'Department of Computer Science and Engineering',
-    institution: 'Port City International University',
-    bio: 'Central system administrator managing student applications, research project moderation, academic integrity compliance, and site telemetry.',
-    interests: ['Artificial Intelligence', 'Cyber Security', 'Cloud Computing'],
-    skills: ['System Administration', 'Database Management', 'Security Audits'],
-    links: {
-      website: 'https://portcity.edu.bd'
-    },
-    verified: true,
-    createdAt: '2025-01-01T00:00:00Z'
   }
 ];
 

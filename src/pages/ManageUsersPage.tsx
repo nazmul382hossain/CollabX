@@ -10,6 +10,7 @@ import {
   ShieldCheck, 
   X,
   CheckCircle2,
+  XCircle,
   AlertTriangle
 } from 'lucide-react';
 import { User, UserRole, UserStatus } from '../types';
@@ -68,18 +69,30 @@ export const ManageUsersPage: React.FC<ManageUsersPageProps> = ({ onNavigate, in
     publicProfileService.syncUserProfile(updated);
   };
 
+  const handleUpdateVerification = (targetUser: User, status: 'verified' | 'rejected') => {
+    const updated: User = {
+      ...targetUser,
+      verificationStatus: status,
+      verified: status === 'verified'
+    };
+    storage.updateUser(updated);
+    publicProfileService.syncUserProfile(updated);
+  };
+
   const handleAddUser = (e: React.FormEvent) => {
     e.preventDefault();
     if (!newName.trim() || !newEmail.trim()) return;
+
+    const safeRole: UserRole = (newRole === 'supervisor' || newRole === 'researcher') ? newRole : 'student';
 
     const newUser: User = {
       id: `user-${Date.now()}`,
       name: newName.trim(),
       email: newEmail.trim(),
-      role: newRole,
+      role: safeRole,
       status: 'active',
       avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=200&auto=format&fit=crop&q=80',
-      headline: `${newRole === 'student' ? 'Student' : 'Faculty Researcher'} · ${newDepartment}`,
+      headline: `${safeRole === 'student' ? 'Student' : 'Faculty Researcher'} · ${newDepartment}`,
       department: newDepartment,
       institution: 'Port City International University',
       bio: 'Enrolled academic researcher.',
@@ -184,6 +197,7 @@ export const ManageUsersPage: React.FC<ManageUsersPageProps> = ({ onNavigate, in
                 <th className="py-3.5 px-6">Name</th>
                 <th className="py-3.5 px-6">Role</th>
                 <th className="py-3.5 px-6">Department</th>
+                <th className="py-3.5 px-6">Verification</th>
                 <th className="py-3.5 px-6">Status</th>
                 <th className="py-3.5 px-6 text-right">Actions</th>
               </tr>
@@ -219,6 +233,17 @@ export const ManageUsersPage: React.FC<ManageUsersPageProps> = ({ onNavigate, in
                     {u.department}
                   </td>
 
+                  {/* Verification Status */}
+                  <td className="py-4 px-6">
+                    {u.verificationStatus === 'pending' ? (
+                      <Badge variant="yellow" dot={true}>Pending ID Review</Badge>
+                    ) : u.verificationStatus === 'rejected' ? (
+                      <Badge variant="red">Rejected</Badge>
+                    ) : (
+                      <Badge variant="green" dot={true}>Verified</Badge>
+                    )}
+                  </td>
+
                   {/* Status: Active green / Inactive pink */}
                   <td className="py-4 px-6">
                     {u.status === 'active' ? (
@@ -228,9 +253,28 @@ export const ManageUsersPage: React.FC<ManageUsersPageProps> = ({ onNavigate, in
                     )}
                   </td>
 
-                  {/* Actions: View, Edit/Toggle, Delete matching Screenshot 20 */}
+                  {/* Actions: View, Approve/Reject, Edit/Toggle, Delete */}
                   <td className="py-4 px-6 text-right">
                     <div className="inline-flex items-center gap-2">
+                      {u.verificationStatus === 'pending' && (
+                        <>
+                          <button
+                            onClick={() => handleUpdateVerification(u, 'verified')}
+                            className="p-1.5 rounded-lg text-emerald-600 hover:bg-emerald-50 transition-colors"
+                            title="Approve Institutional ID"
+                          >
+                            <CheckCircle2 className="w-4 h-4" />
+                          </button>
+                          <button
+                            onClick={() => handleUpdateVerification(u, 'rejected')}
+                            className="p-1.5 rounded-lg text-red-500 hover:bg-red-50 transition-colors"
+                            title="Reject Institutional ID"
+                          >
+                            <XCircle className="w-4 h-4" />
+                          </button>
+                        </>
+                      )}
+
                       <button
                         onClick={() => onNavigate(`/u/${u.id}`)}
                         className="p-1.5 rounded-lg text-gray-500 hover:text-[#0B6BE6] hover:bg-gray-100"
@@ -314,7 +358,6 @@ export const ManageUsersPage: React.FC<ManageUsersPageProps> = ({ onNavigate, in
                     <option value="student">Student</option>
                     <option value="researcher">Researcher</option>
                     <option value="supervisor">Supervisor</option>
-                    <option value="admin">Administrator</option>
                   </select>
                 </div>
 

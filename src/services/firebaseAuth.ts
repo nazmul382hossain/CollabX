@@ -34,14 +34,14 @@ import { authService, RegisterParams } from './authService';
 import { formatFileSize } from './cvService';
 import { publicProfileService } from './publicProfileService';
 
-// Real Firebase Client Configuration from Environment Variables (collabx-6ee7d)
+// Real Firebase Client Configuration from Environment Variables
 export const firebaseConfig = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || 'AIzaSyBK_WH_oo1zFxP434KVtn4D0vdia-0o6dM',
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || 'collabx-6ee7d.firebaseapp.com',
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || 'collabx-6ee7d',
-  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || 'collabx-6ee7d.firebasestorage.app',
-  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || '539635877993',
-  appId: import.meta.env.VITE_FIREBASE_APP_ID || '1:539635877993:web:b3405bbb67c9273a16baf8'
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || '',
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || '',
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || '',
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || '',
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || '',
+  appId: import.meta.env.VITE_FIREBASE_APP_ID || ''
 };
 
 export function isFirebaseConfigured(): boolean {
@@ -164,24 +164,39 @@ export async function initializeFirebaseAuth(): Promise<User | null> {
             notifyAuthListeners(null);
             return;
           }
-          storage.setCurrentUser(userProfile.id);
-          notifyAuthListeners(userProfile);
+          if (userProfile.verified === true) {
+            storage.setCurrentUser(userProfile.id);
+            notifyAuthListeners(userProfile);
+          } else {
+            // Document exists but verified !== true
+            notifyAuthListeners({
+              ...userProfile,
+              verified: false
+            });
+          }
+        } else {
+          // Document does not exist in Firestore: user has not completed verification profile
+          notifyAuthListeners(null);
         }
       });
     }
 
-    // 3. Sync from session storage
+    // 3. Sync from session storage as provisional state
     const user = storage.getCurrentUser();
     if (user && user.status === 'active') {
       currentAuthenticatedUser = user;
     } else {
       currentAuthenticatedUser = null;
     }
+
+    if (!auth) {
+      isInitialAuthLoaded = true;
+      notifyAuthListeners(currentAuthenticatedUser);
+    }
   } catch {
     currentAuthenticatedUser = null;
-  } finally {
     isInitialAuthLoaded = true;
-    notifyAuthListeners(currentAuthenticatedUser);
+    notifyAuthListeners(null);
   }
   return currentAuthenticatedUser;
 }
@@ -196,13 +211,59 @@ export function isAuthReady(): boolean {
 
 /**
  * Sign In with strict authentication
+ * 1. Authenticates against Firebase Auth if configured.
+ * 2. Reads role STRICTLY from Firestore users/{uid}.
+ * 3. Rejects inactive accounts and returns generic error on failure.
  */
 export async function signInWithEmailAndPassword(
   email: string, 
   pass: string
 ): Promise<{ success: boolean; user?: User; error?: string }> {
-  // Validate credentials with storage/authService
-  const result = await authService.login(email, pass);
+  const cleanEmail = (email || '').trim().toLowerCase();
+
+  // Try real Firebase Auth & Firestore first if configured
+  if (auth && db && isFirebaseConfigured()) {
+    try {
+      const cred = await fbSignIn(auth, cleanEmail, pass);
+      const fbUser = cred.user;
+
+      // Read role ONLY from Firestore users/{uid}
+      const userSnap = await getDoc(doc(db, 'users', fbUser.uid));
+      if (userSnap.exists()) {
+        const firestoreData = userSnap.data() as User;
+
+        if (firestoreData.status === 'inactive') {
+          await fbSignOut(auth).catch(() => {});
+          return {
+            success: false,
+            error: 'Your account is currently disabled or inactive. Please contact the administrator.'
+          };
+        }
+
+        const authenticatedUser: User = {
+          ...firestoreData,
+          id: fbUser.uid,
+          email: fbUser.email || cleanEmail,
+          // Role is read strictly from Firestore users/{uid}
+          role: firestoreData.role || 'student'
+        };
+
+        storage.updateUser(authenticatedUser);
+        storage.setCurrentUser(authenticatedUser.id);
+        notifyAuthListeners(authenticatedUser);
+
+        return {
+          success: true,
+          user: authenticatedUser
+        };
+      }
+    } catch (fbErr: any) {
+      console.warn('Firebase Auth sign in notice:', fbErr?.code);
+    }
+  }
+
+  // Fallback to storage/authService
+  const result = await authService.login(cleanEmail, pass);
   if (!result.success || !result.user) {
     return {
       success: false,
@@ -220,12 +281,82 @@ export async function signInWithEmailAndPassword(
 }
 
 /**
- * Create a new user account in database & Firestore profile
+ * Create a new user account in Firebase Auth & Firestore profile
+ * Role is strictly restricted to ['student', 'researcher', 'supervisor'].
+ * Admin accounts can NEVER be created from client code.
  */
 export async function createUserWithEmailAndPassword(
   params: RegisterParams
 ): Promise<{ success: boolean; user?: User; error?: string }> {
-  const result = await authService.register(params);
+  const cleanEmail = (params.email || '').trim().toLowerCase();
+  const rawRole = params.role || 'student';
+  const role: UserRole = (rawRole === 'supervisor' || rawRole === 'researcher') ? rawRole : 'student';
+
+  if (auth && db && isFirebaseConfigured()) {
+    try {
+      const cred = await fbCreateUser(auth, cleanEmail, params.password);
+      const uid = cred.user.uid;
+
+      const newUser: User = {
+        id: uid,
+        name: params.name.trim(),
+        email: cleanEmail,
+        role,
+        status: 'active',
+        universityId: params.universityId?.trim(),
+        department: params.department || 'Computer Science and Engineering',
+        institution: params.institution || 'Port City International University',
+        avatar: role === 'student' ? 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=200&auto=format&fit=crop&q=80' : 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=200&auto=format&fit=crop&q=80',
+        headline: `${role === 'student' ? 'Student Researcher' : 'Faculty Supervisor'} · ${params.department || 'CSE'}`,
+        bio: `CollabX ${role} collaborating in academic research.`,
+        interests: ['Artificial Intelligence', 'Data Science'],
+        skills: role === 'student' ? ['Python', 'Data Analysis'] : ['Research Methodology', 'Data Science'],
+        links: {},
+        verified: true,
+        createdAt: new Date().toISOString()
+      };
+
+      // 1. Write private users/{uid} document in Firestore
+      await setDoc(doc(db, 'users', uid), {
+        id: uid,
+        name: newUser.name,
+        email: cleanEmail,
+        role: newUser.role,
+        status: 'active',
+        department: newUser.department,
+        institution: newUser.institution,
+        avatar: newUser.avatar,
+        headline: newUser.headline,
+        bio: newUser.bio,
+        interests: newUser.interests,
+        skills: newUser.skills,
+        links: newUser.links,
+        createdAt: newUser.createdAt
+      });
+
+      // 2. Write publicProfiles/{uid} document in Firestore
+      await publicProfileService.syncUserProfile(newUser);
+
+      // Sign out new user from Firebase Auth so they log in with credentials
+      await fbSignOut(auth).catch(() => {});
+
+      return {
+        success: true,
+        user: newUser
+      };
+    } catch (fbErr: any) {
+      console.warn('Firebase createUser notice:', fbErr?.code);
+      if (fbErr?.code === 'auth/email-already-in-use') {
+        return {
+          success: false,
+          error: 'An account with this email address already exists. Please log in.'
+        };
+      }
+    }
+  }
+
+  // Fallback to authService.register
+  const result = await authService.register({ ...params, role });
   if (!result.success || !result.user) {
     return {
       success: false,
@@ -233,7 +364,6 @@ export async function createUserWithEmailAndPassword(
     };
   }
 
-  // Save new user profile without auto-authenticating
   return {
     success: true,
     user: result.user
@@ -294,13 +424,24 @@ export interface SocialAuthResponse {
   redirecting?: boolean;
 }
 
+export interface SocialAuthOptions {
+  preferredRole?: UserRole;
+  department?: string;
+  universityId?: string;
+  institution?: string;
+  isRegistration?: boolean;
+}
+
 /**
  * Real Firebase Authentication signInWithPopup with Google or GitHub
  * NEVER asks for or stores user's password.
  * Opens official accounts.google.com or github.com popup.
  * If not configured, returns notConfigured: true with a clear informative message.
  */
-export async function signInWithSocialOAuth(providerType: 'Google' | 'GitHub'): Promise<SocialAuthResponse> {
+export async function signInWithSocialOAuth(
+  providerType: 'Google' | 'GitHub',
+  options?: SocialAuthOptions
+): Promise<SocialAuthResponse> {
   // Check if Firebase is configured with credentials
   if (!isFirebaseConfigured() || !auth) {
     return {
@@ -316,6 +457,9 @@ export async function signInWithSocialOAuth(providerType: 'Google' | 'GitHub'): 
       provider = new GoogleAuthProvider();
       provider.addScope('profile');
       provider.addScope('email');
+      provider.setCustomParameters({
+        prompt: 'select_account'
+      });
     } else {
       provider = new GithubAuthProvider();
       provider.addScope('user:email');
@@ -335,7 +479,12 @@ export async function signInWithSocialOAuth(providerType: 'Google' | 'GitHub'): 
     const uid = fbUser.uid;
     const email = fbUser.email || null;
     const displayName = fbUser.displayName || null;
-    const photoURL = fbUser.photoURL || null;
+    let photoURL = fbUser.photoURL || null;
+
+    // For Google photos, replace "=s96-c" with "=s400-c" for a sharper image
+    if (photoURL && providerType === 'Google') {
+      photoURL = photoURL.replace('=s96-c', '=s400-c');
+    }
 
     // Check if user document already exists in Firestore or local synced store
     let existingUser: User | null = null;
@@ -354,11 +503,12 @@ export async function signInWithSocialOAuth(providerType: 'Google' | 'GitHub'): 
     if (!existingUser) {
       const users = storage.getUsers();
       existingUser = users.find(u => 
-        (email && u.email.toLowerCase() === email.toLowerCase()) || u.id === uid
+        (email && u.email?.toLowerCase() === email.toLowerCase()) || u.id === uid
       ) || null;
     }
 
-    if (existingUser) {
+    // Returning user only if users/{uid} has verified === true
+    if (existingUser && existingUser.verified === true) {
       if (existingUser.status === 'inactive') {
         if (auth) await fbSignOut(auth).catch(() => {});
         return {
@@ -367,19 +517,12 @@ export async function signInWithSocialOAuth(providerType: 'Google' | 'GitHub'): 
         };
       }
 
-      // Update avatar/name if returned from provider
-      const updated: User = {
-        ...existingUser,
-        avatar: photoURL || existingUser.avatar,
-        name: displayName || existingUser.name
-      };
-      storage.updateUser(updated);
-      storage.setCurrentUser(updated.id);
-      notifyAuthListeners(updated);
-      return { success: true, isNewUser: false, user: updated };
+      storage.setCurrentUser(existingUser.id);
+      notifyAuthListeners(existingUser);
+      return { success: true, isNewUser: false, user: existingUser };
     }
 
-    // First-time user (no document): show Complete Profile step
+    // First-time user: return profileData for processing -> profile reveal -> role-verification modal
     return {
       success: true,
       isNewUser: true,
@@ -394,78 +537,39 @@ export async function signInWithSocialOAuth(providerType: 'Google' | 'GitHub'): 
   } catch (authErr: any) {
     const code = authErr?.code || '';
 
+    // auth/popup-closed-by-user or auth/cancelled-popup-request: silently return to the sign-up page, no error
     if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') {
-      return { success: false, cancelled: true, error: 'Sign-in cancelled' };
+      return { success: false, cancelled: true };
     }
 
+    // auth/popup-blocked: show friendly message
     if (code === 'auth/popup-blocked') {
-      // Fall back to redirect if popup is blocked
-      try {
-        let provider: GoogleAuthProvider | GithubAuthProvider;
-        if (providerType === 'Google') {
-          provider = new GoogleAuthProvider();
-          provider.addScope('profile');
-          provider.addScope('email');
-        } else {
-          provider = new GithubAuthProvider();
-          provider.addScope('user:email');
-        }
-        await signInWithRedirect(auth, provider);
-        return { success: true, redirecting: true };
-      } catch {
-        return { 
-          success: false, 
-          error: 'Sign-in popup was blocked by your browser. Please allow popups for this site.' 
-        };
-      }
-    }
-
-    if (code === 'auth/unauthorized-domain') {
-      const host = typeof window !== 'undefined' ? window.location.hostname : 'this domain';
-      return {
-        success: false,
-        error: `This domain is not authorized in Firebase. Add it under Authentication > Settings > Authorized domains. (${host})`
+      return { 
+        success: false, 
+        error: 'Please allow popups for this site and try again.' 
       };
     }
 
-    if (code === 'auth/operation-not-allowed') {
-      return {
-        success: false,
-        notConfigured: true,
-        error: 'This sign-in method is not enabled in Firebase Console yet.'
-      };
-    }
-
-    if (
-      code === 'auth/invalid-api-key' || 
-      code === 'auth/api-key-not-valid' ||
-      code === 'auth/configuration-not-found'
-    ) {
-      return {
-        success: false,
-        notConfigured: true,
-        error: 'Firebase config is invalid. Check the environment variables.'
-      };
-    }
-
+    // auth/account-exists-with-different-credential
     if (code === 'auth/account-exists-with-different-credential') {
       return {
         success: false,
-        error: `This email is already registered with another method. Log in with that method first, then link ${providerType} from Settings.`
+        error: 'This email is already registered with another sign-in method. Please use that method.'
       };
     }
 
+    // auth/network-request-failed
     if (code === 'auth/network-request-failed') {
-      return { success: false, error: 'Network request failed. Please check your internet connection.' };
+      return { 
+        success: false, 
+        error: 'Network error. Please check your connection.' 
+      };
     }
 
-    if (code === 'auth/too-many-requests') {
-      return { success: false, error: 'Too many sign-in attempts. Please try again in a few moments.' };
-    }
-
+    // Any other error
     return {
       success: false,
-      error: authErr?.message || `${providerType} sign-in failed.`
+      error: 'Sign-in failed. Please try again.'
     };
   }
 }
@@ -505,24 +609,55 @@ export async function createSocialUserProfile(data: {
   role: UserRole;
   department: string;
   institution?: string;
+  studentId?: string;
   universityId?: string;
-  authProvider: 'Google' | 'GitHub';
+  authProvider: 'Google' | 'GitHub' | 'google' | 'github';
 }): Promise<User> {
-  // Enforce role security: role must NEVER be admin
+  // Enforce role security: role must NEVER be admin; strictly student, researcher or supervisor ONLY
   const allowedRoles: UserRole[] = ['student', 'researcher', 'supervisor'];
   const safeRole: UserRole = allowedRoles.includes(data.role) ? data.role : 'student';
 
-  const defaultAvatar = data.photoURL || (
-    data.authProvider === 'Google'
+  const providerLower = (data.authProvider || 'google').toLowerCase() as 'google' | 'github';
+  const cleanStudentId = (data.studentId || data.universityId || '').trim();
+  const createdAt = new Date().toISOString();
+
+  let cleanPhotoURL = data.photoURL || '';
+  if (cleanPhotoURL && providerLower === 'google') {
+    cleanPhotoURL = cleanPhotoURL.replace('=s96-c', '=s400-c');
+  }
+
+  // Explicit Firestore document for users/{uid} as required
+  const firestoreUserDoc = {
+    name: data.name.trim(),
+    email: data.email.trim().toLowerCase(),
+    photoURL: cleanPhotoURL,
+    provider: providerLower,
+    role: safeRole,
+    department: data.department || 'Computer Science and Engineering',
+    studentId: cleanStudentId,
+    verified: true,
+    createdAt
+  };
+
+  if (db) {
+    try {
+      await setDoc(doc(db, 'users', data.uid), firestoreUserDoc, { merge: true });
+    } catch (err) {
+      console.warn('Failed to write users/{uid} doc to Firestore:', err);
+    }
+  }
+
+  const defaultAvatar = cleanPhotoURL || (
+    providerLower === 'google'
       ? 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=200&auto=format&fit=crop&q=80'
       : 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=200&auto=format&fit=crop&q=80'
   );
 
   const newUser: User = {
     id: data.uid,
-    name: data.name.trim(),
-    email: data.email.trim().toLowerCase(),
-    universityId: data.universityId?.trim() || undefined,
+    name: firestoreUserDoc.name,
+    email: firestoreUserDoc.email,
+    universityId: cleanStudentId || undefined,
     role: safeRole,
     status: 'active',
     avatar: defaultAvatar,
@@ -533,23 +668,21 @@ export async function createSocialUserProfile(data: {
         : 'Academic Researcher',
     department: data.department,
     institution: data.institution || 'Port City International University',
-    bio: `Authenticated via ${data.authProvider} Single Sign-On. Collaborative academic researcher.`,
+    bio: `Authenticated via ${providerLower === 'google' ? 'Google' : 'GitHub'} Single Sign-On. Collaborative academic researcher.`,
     interests: ['Artificial Intelligence', 'Data Science', 'Machine Learning', 'Software Systems'],
-    skills: data.authProvider === 'GitHub' 
+    skills: providerLower === 'github' 
       ? ['Git', 'Python', 'TypeScript', 'Docker', 'Open Source'] 
       : ['Research Methodology', 'Python', 'Data Analysis', 'Scientific Writing'],
-    links: data.authProvider === 'GitHub' ? {
+    links: providerLower === 'github' ? {
       github: `https://github.com/${data.name.toLowerCase().replace(/\s+/g, '-')}`
     } : {},
     verified: true,
-    createdAt: new Date().toISOString()
+    authProvider: providerLower === 'google' ? 'Google' : 'GitHub',
+    createdAt
   };
 
   storage.addUser(newUser);
-
-  // Sync to both users/{uid} and publicProfiles/{uid} collections
   await publicProfileService.syncUserProfile(newUser);
-
   storage.setCurrentUser(newUser.id);
   notifyAuthListeners(newUser);
   return newUser;

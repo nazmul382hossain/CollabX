@@ -57,7 +57,22 @@ export const ResearcherDashboard: React.FC<ResearcherDashboardProps> = ({ curren
   const lastName = currentUser.name.split(' ').slice(1).join(' ') || currentUser.name;
 
   return (
-    <div className="space-y-8 animate-fade-in p-2 sm:p-4">
+    <div className="space-y-6 animate-fade-in p-2 sm:p-4">
+      {/* Verification Pending Banner */}
+      {currentUser.verificationStatus === 'pending' && (
+        <div className="bg-amber-50 border border-amber-200 rounded-2xl p-3.5 sm:p-4 flex items-center justify-between gap-3 text-amber-900 shadow-2xs">
+          <div className="flex items-center gap-2.5">
+            <Clock className="w-5 h-5 text-amber-600 shrink-0" />
+            <div className="text-xs sm:text-sm font-semibold">
+              Verification pending: an admin will review your institutional ID
+            </div>
+          </div>
+          <span className="text-[11px] font-bold text-amber-700 bg-amber-100 border border-amber-300 px-2.5 py-0.5 rounded-full shrink-0">
+            Under Review
+          </span>
+        </div>
+      )}
+
       {/* Header Banner matching Screenshot 12 */}
       <div className="bg-white rounded-3xl border border-[#E3EAF3] p-6 sm:p-8 flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-xs">
         <div className="space-y-1">

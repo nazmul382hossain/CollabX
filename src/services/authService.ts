@@ -9,8 +9,9 @@ import { hashPassword, verifyPassword, generateSalt } from './cryptoUtils';
 import { ASSETS } from '../data/assets';
 import { publicProfileService } from './publicProfileService';
 import { db, auth } from './firebaseAuth';
-import { doc, updateDoc } from 'firebase/firestore';
+import { doc, getDoc, updateDoc } from 'firebase/firestore';
 import { 
+  signInWithEmailAndPassword as fbSignIn,
   sendPasswordResetEmail, 
   fetchSignInMethodsForEmail, 
   ActionCodeSettings,
@@ -118,6 +119,44 @@ class AuthService {
       };
     }
 
+    // Attempt authentic Firebase Auth & Firestore verification first
+    if (auth && db) {
+      try {
+        const cred = await fbSignIn(auth, cleanEmail, cleanPassword);
+        const fbUser = cred.user;
+        const userDocRef = doc(db, 'users', fbUser.uid);
+        const userSnap = await getDoc(userDocRef);
+
+        if (userSnap.exists()) {
+          const firestoreUser = userSnap.data() as User;
+          if (firestoreUser.status === 'inactive') {
+            return {
+              success: false,
+              error: 'Your account is currently disabled or inactive. Please contact the administrator.'
+            };
+          }
+
+          const account: User = {
+            ...firestoreUser,
+            id: fbUser.uid,
+            email: fbUser.email || cleanEmail,
+            role: firestoreUser.role || 'student'
+          };
+
+          storage.updateUser(account);
+          storage.establishAuthenticatedSession(account);
+
+          return {
+            success: true,
+            user: account,
+            redirect: this.getDashboardRoute(account.role)
+          };
+        }
+      } catch (fbErr: any) {
+        console.warn('Firebase login attempt notice:', fbErr?.code);
+      }
+    }
+
     // Look up user in database
     const users = storage.getUsers();
     const account = users.find(u => u.email.toLowerCase() === cleanEmail);
@@ -181,7 +220,9 @@ class AuthService {
     const cleanEmail = (params.email || '').trim().toLowerCase();
     const password = params.password || '';
     const confirmPassword = params.confirmPassword || '';
-    const role = params.role || 'student';
+    // Enforce allowed public registration roles (admin is strictly forbidden from client creation)
+    const rawRole = params.role || 'student';
+    const role: UserRole = (rawRole === 'supervisor' || rawRole === 'researcher') ? rawRole : 'student';
     const universityId = (params.universityId || '').trim();
     const department = (params.department || 'Computer Science and Engineering').trim();
     const institution = (params.institution || 'Port City International University').trim();
@@ -245,17 +286,13 @@ class AuthService {
       ? ASSETS.avatars.ash 
       : role === 'supervisor' 
         ? ASSETS.avatars.drFahim 
-        : role === 'admin' 
-          ? ASSETS.avatars.admin 
-          : ASSETS.avatars.brock;
+        : ASSETS.avatars.brock;
 
     const headline = role === 'student'
       ? `${department} Student Researcher`
       : role === 'supervisor'
         ? `Research Supervisor & Faculty Mentor`
-        : role === 'admin'
-          ? `Portal Administrator`
-          : `Academic Researcher`;
+        : `Academic Researcher`;
 
     const newUser: User = {
       id: `user-${Date.now()}`,

@@ -8,19 +8,14 @@ CollabX is a centralized university web portal where **students, researchers, an
 
 ---
 
-## 1. Demo User Accounts
+## 1. Authentication & Role-Based Access Control
 
-Use the **1-Click Demo Accounts** selector on the Login screen or top bar, or login with:
+CollabX authenticates university students, researchers, and faculty supervisors directly via Firebase (Authentication & Cloud Firestore):
 
-| Role | Name | Email | Password |
-| :--- | :--- | :--- | :--- |
-| **Student** | Ash Ketchum | `ash@collabx.test` | `Password@123` |
-| **Supervisor** | Dr. Fahim Rahman | `fahim@collabx.test` | `Password@123` |
-| **Supervisor** | Dr. Sarhan | `sarhan@collabx.test` | `Password@123` |
-| **Researcher** | Dr. Sabbir Islam | `sabbir@collabx.test` | `Password@123` |
-| **Admin** | System Admin | `admin@collabx.test` | `Password@123` |
+- **Self-Service Registration:** New students, researchers, and faculty create their accounts using their university credentials on the Sign Up page.
+- **OAuth Providers:** Google and GitHub academic sign-in are supported via Firebase Authentication popup.
+- **Admin Access:** Administrator privileges (`role: "admin"`) are strictly managed server-side and assigned via Firebase Console or designated Firestore security rules.
 
----
 
 ## 2. 20 Visual Screens Checklist
 
@@ -30,7 +25,7 @@ CollabX is faithfully designed to match all 20 reference screenshots:
 - [x] **Page 2 — Research Areas:** 4×2 pastel grid (AI, Data Science, Cyber Security, Web Tech, IoT, Cloud, Bioinformatics, Others) with live project counts and subfield tags.
 - [x] **Page 3 — Projects List:** Left filter panel (Area, Type, Skills, Status, Apply Filters button) + Right sortable rows with 140×105 thumbnails, supervisor info, seats, and deadlines.
 - [x] **Page 4 — Project Details:** Top-right banner, supervisor card with Contact/View Profile, tabs (Overview, Requirements, Team, Progress, Discussion, Files), 4 info cards, orange "Apply to Join" button with CV upload.
-- [x] **Page 5 — Login:** Split view with academic artwork, email/password, Google/GitHub buttons, and 1-click demo switcher.
+- [x] **Page 5 — Login:** Split view with academic artwork, email/password, and Google/GitHub authentication.
 - [x] **Page 6 — Register:** Role selector (Student, Researcher, Supervisor), password strength meter, validation, and auto-redirect to login.
 - [x] **Page 7 — Student Dashboard:** "Welcome back, Ash!" with waving Pikachu mascot, 5 pastel stat cards (Applications, Approved, Pending, Rejected, Saved), Recommended Projects with match percentages and rationale tooltips.
 - [x] **Page 8 — My Applications:** Filter pills (All, Pending, Approved, Rejected) with real-time counts, timeline drawer, and Withdraw button.

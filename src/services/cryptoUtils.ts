@@ -4,9 +4,7 @@
 // =====================================================================
 
 export const DEFAULT_SALT = 'c011abx_s41t_2026';
-
-// Pre-computed hash of 'Password@123' with DEFAULT_SALT
-export const DEFAULT_PASSWORD_HASH = 'sha256$c011abx_s41t_2026$c61747f38c42b7f449b75b4b016daba691d0fea13824bc9fd83be7f8471d4122';
+// Secure Cryptography Utilities for CollabX
 
 /**
  * Generate a random cryptographically strong hex salt
@@ -62,12 +60,6 @@ export async function verifyPassword(password: string, storedHash?: string, salt
       const computedDigest = computed.split('$')[2];
       return computedDigest === expectedDigest;
     }
-  }
-
-  // Legacy Werkzeug / bcrypt demo placeholder fallback check
-  // E.g., if stored as "$2y$12$eXAMPLEDemoHashedPassword..."
-  if (storedHash.includes('eXAMPLEDemoHashedPassword')) {
-    return password === 'Password@123';
   }
 
   // Fallback: verify with provided salt if separate

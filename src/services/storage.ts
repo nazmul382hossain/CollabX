@@ -27,7 +27,6 @@ import {
   SEED_ACTIVITY_LOGS, 
   SEED_CONTACT_MESSAGES 
 } from '../data/seedData';
-import { DEFAULT_PASSWORD_HASH, DEFAULT_SALT } from './cryptoUtils';
 
 const STORAGE_KEYS = {
   AUTH_VERSION: 'collabx_auth_v2',
@@ -69,28 +68,6 @@ class StorageService {
 
     if (!localStorage.getItem(STORAGE_KEYS.USERS)) {
       localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(SEED_USERS));
-    } else {
-      // Ensure all existing stored users have secure password hashes
-      try {
-        const storedUsers: User[] = JSON.parse(localStorage.getItem(STORAGE_KEYS.USERS) || '[]');
-        let updated = false;
-        const normalized = storedUsers.map(u => {
-          if (!u.passwordHash) {
-            updated = true;
-            return {
-              ...u,
-              passwordHash: DEFAULT_PASSWORD_HASH,
-              salt: DEFAULT_SALT
-            };
-          }
-          return u;
-        });
-        if (updated) {
-          localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(normalized));
-        }
-      } catch {
-        localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(SEED_USERS));
-      }
     }
 
     // STRICT REQUIREMENT: DO NOT auto-login any user when site opens!
@@ -172,7 +149,7 @@ class StorageService {
       localStorage.setItem(STORAGE_KEYS.CONTACT, JSON.stringify(SEED_CONTACT_MESSAGES));
     }
     if (!localStorage.getItem(STORAGE_KEYS.NEWSLETTER)) {
-      localStorage.setItem(STORAGE_KEYS.NEWSLETTER, JSON.stringify(['ash@collabx.test', 'student@pciu.edu.bd']));
+      localStorage.setItem(STORAGE_KEYS.NEWSLETTER, JSON.stringify(['student@portcity.edu.bd']));
     }
   }
 
@@ -244,7 +221,12 @@ class StorageService {
 
   addUser(user: User): void {
     const users = this.getUsers();
-    users.push(user);
+    const existingIndex = users.findIndex(u => u.id === user.id || (user.email && u.email.toLowerCase() === user.email.toLowerCase()));
+    if (existingIndex >= 0) {
+      users[existingIndex] = { ...users[existingIndex], ...user };
+    } else {
+      users.push(user);
+    }
     localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(users));
     this.logActivity(user.id, user.name, user.avatar, 'joined CollabX as', 'user', user.role);
     this.dispatchChange('user_added');
@@ -289,7 +271,7 @@ class StorageService {
       projectId: project.id,
       userId: project.supervisorId,
       name: project.supervisorName,
-      email: this.getUser(project.supervisorId)?.email || 'researcher@collabx.test',
+      email: this.getUser(project.supervisorId)?.email || 'supervisor@portcity.edu.bd',
       avatar: project.supervisorAvatar,
       role: 'supervisor',
       positionTitle: 'Supervisor & Principal Investigator',

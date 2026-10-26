@@ -15,9 +15,8 @@ import { User } from '../types';
 import { authService } from '../services/authService';
 import { ASSETS } from '../data/assets';
 import { Logo } from '../components/common/Logo';
-import { OAuthModal } from '../components/common/OAuthModal';
 import { ForgotPasswordModal } from '../components/auth/ForgotPasswordModal';
-import { signInWithSocialOAuth, SocialAuthProfileData } from '../services/firebaseAuth';
+import { useAuth } from '../contexts/AuthContext';
 
 interface LoginPageProps {
   onLoginSuccess: (user: User) => void;
@@ -32,17 +31,14 @@ export const LoginPage: React.FC<LoginPageProps> = ({
   message,
   returnUrl: propReturnUrl
 }) => {
-  const [oauthProvider, setOauthProvider] = useState<'Google' | 'GitHub' | null>(null);
-  const [socialProfileData, setSocialProfileData] = useState<SocialAuthProfileData | null>(null);
+  const { signInWithSocial } = useAuth();
   const [activeSocialLoading, setActiveSocialLoading] = useState<'Google' | 'GitHub' | null>(null);
-  const [isOAuthOpen, setIsOAuthOpen] = useState(false);
   const [isForgotPasswordOpen, setIsForgotPasswordOpen] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [showCredentialsHelper, setShowCredentialsHelper] = useState(false);
 
   // Helper to read query params from URL hash or query string
   const getParams = () => {
@@ -144,9 +140,17 @@ export const LoginPage: React.FC<LoginPageProps> = ({
       // Successful authentication: create authenticated session and redirect
       onLoginSuccess(result.user);
       
-      // If there was a returnUrl, redirect there directly
-      if (returnUrl) {
-        onNavigate(returnUrl);
+      // If there was a returnUrl, ensure user has the appropriate role before navigating
+      if (returnUrl && returnUrl !== '/login') {
+        const isAdminRoute = returnUrl.startsWith('/admin');
+        const isFacultyRoute = returnUrl.startsWith('/researcher') || returnUrl.startsWith('/publish-project');
+        if (isAdminRoute && result.user.role !== 'admin') {
+          // Non-admins redirected to their appropriate role dashboard by onLoginSuccess
+        } else if (isFacultyRoute && result.user.role === 'student') {
+          // Students redirected to their dashboard by onLoginSuccess
+        } else {
+          onNavigate(returnUrl);
+        }
       }
     } catch {
       setError('An error occurred during authentication. Please try again.');
@@ -160,60 +164,17 @@ export const LoginPage: React.FC<LoginPageProps> = ({
     setActiveSocialLoading(provider);
 
     try {
-      const result = await signInWithSocialOAuth(provider);
+      const result = await signInWithSocial(provider);
       setActiveSocialLoading(null);
 
-      if (result.redirecting) {
-        setPopupNotice(`Redirecting to ${provider}...`);
-        setShowPopupToast(true);
-        return;
+      if (!result.success && !result.cancelled) {
+        setError(result.error || 'Sign-in failed. Please try again.');
       }
-
-      if (result.cancelled) {
-        setPopupNotice('Sign-in cancelled');
-        setShowPopupToast(true);
-        return;
-      }
-
-      if (result.notConfigured) {
-        setPopupNotice(result.error || `${provider} sign-in is not configured`);
-        setShowPopupToast(true);
-        return;
-      }
-
-      if (!result.success) {
-        setPopupNotice(result.error || `${provider} sign-in failed`);
-        setShowPopupToast(true);
-        return;
-      }
-
-      // If returning user: logged in directly
-      if (!result.isNewUser && result.user) {
-        onLoginSuccess(result.user);
-        if (returnUrl) {
-          onNavigate(returnUrl);
-        } else {
-          onNavigate(result.user.role === 'admin' ? '/admin' : result.user.role === 'supervisor' || result.user.role === 'researcher' ? '/researcher' : '/dashboard');
-        }
-        return;
-      }
-
-      // If new user: open Complete Profile modal prefilled with provider info
-      if (result.isNewUser && result.profileData) {
-        setOauthProvider(provider);
-        setSocialProfileData(result.profileData);
-        setIsOAuthOpen(true);
-      }
-    } catch (err: any) {
+      // Never navigate inside sign-in handler: AuthProvider state machine handles navigation!
+    } catch {
       setActiveSocialLoading(null);
-      setPopupNotice(err?.message || `Failed to authenticate with ${provider}.`);
-      setShowPopupToast(true);
+      setError('Sign-in failed. Please try again.');
     }
-  };
-
-  const handleFillTestEmail = (testEmail: string) => {
-    setEmail(testEmail);
-    setError('');
   };
 
   return (
@@ -419,7 +380,8 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                 type="button"
                 onClick={() => handleSocialAuth('Google')}
                 disabled={activeSocialLoading !== null}
-                className="w-full py-2.5 px-4 bg-white hover:bg-gray-50 text-gray-700 font-semibold text-xs sm:text-sm rounded-xl border border-gray-300 shadow-2xs hover:shadow-xs transition-all flex items-center justify-center gap-3 cursor-pointer hover:border-gray-400 disabled:opacity-60"
+                aria-label="Continue with Google"
+                className="w-full h-11 px-4 bg-white hover:bg-gray-50 active:bg-gray-100 text-gray-700 font-semibold text-xs sm:text-sm rounded-xl border border-gray-300 shadow-2xs hover:shadow-xs transition-all flex items-center justify-center gap-3 cursor-pointer hover:border-gray-400 focus:outline-hidden focus:ring-2 focus:ring-[#1565E8]/40 focus:border-[#1565E8] disabled:opacity-60 disabled:cursor-not-allowed"
               >
                 {activeSocialLoading === 'Google' ? (
                   <div className="w-4 h-4 border-2 border-gray-300 border-t-[#4285F4] rounded-full animate-spin" />
@@ -438,7 +400,8 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                 type="button"
                 onClick={() => handleSocialAuth('GitHub')}
                 disabled={activeSocialLoading !== null}
-                className="w-full py-2.5 px-4 bg-white hover:bg-gray-50 text-gray-800 font-semibold text-xs sm:text-sm rounded-xl border border-gray-300 shadow-2xs hover:shadow-xs transition-all flex items-center justify-center gap-3 cursor-pointer hover:border-gray-400 disabled:opacity-60"
+                aria-label="Continue with GitHub"
+                className="w-full h-11 px-4 bg-white hover:bg-gray-50 active:bg-gray-100 text-gray-800 font-semibold text-xs sm:text-sm rounded-xl border border-gray-300 shadow-2xs hover:shadow-xs transition-all flex items-center justify-center gap-3 cursor-pointer hover:border-gray-400 focus:outline-hidden focus:ring-2 focus:ring-[#1565E8]/40 focus:border-[#1565E8] disabled:opacity-60 disabled:cursor-not-allowed"
               >
                 {activeSocialLoading === 'GitHub' ? (
                   <div className="w-4 h-4 border-2 border-gray-300 border-t-gray-900 rounded-full animate-spin" />
@@ -450,75 +413,6 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                 <span>Continue with GitHub</span>
               </button>
             </div>
-
-            {/* Academic Credentials Verification Guide */}
-            <div className="pt-3 border-t border-gray-100">
-              <button
-                type="button"
-                onClick={() => setShowCredentialsHelper(!showCredentialsHelper)}
-                className="w-full flex items-center justify-between text-xs text-gray-500 hover:text-[#1565E8] py-1 cursor-pointer font-medium"
-              >
-                <span className="flex items-center gap-1.5">
-                  <Info className="w-3.5 h-3.5 text-[#1565E8]" />
-                  Database Account Credentials
-                </span>
-                <span>{showCredentialsHelper ? '▲ Hide' : '▼ Show'}</span>
-              </button>
-
-              {showCredentialsHelper && (
-                <div className="mt-2 p-3 rounded-lg bg-gray-50 border border-gray-200 text-xs text-gray-600 space-y-2 animate-fade-in">
-                  <p className="font-semibold text-gray-700">
-                    Registered Accounts (Password: <code className="bg-white px-1 py-0.5 rounded border border-gray-300 font-mono text-[#0B1F4B]">Password@123</code>):
-                  </p>
-                  <div className="grid grid-cols-2 gap-1.5 text-[11px]">
-                    <button
-                      type="button"
-                      onClick={() => handleFillTestEmail('ash@collabx.test')}
-                      className="text-left p-1.5 rounded bg-white hover:bg-blue-50 border border-gray-200 cursor-pointer"
-                    >
-                      <div className="font-bold text-[#0B1F4B]">Student</div>
-                      <div className="text-gray-500 truncate">ash@collabx.test</div>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleFillTestEmail('fahim@collabx.test')}
-                      className="text-left p-1.5 rounded bg-white hover:bg-blue-50 border border-gray-200 cursor-pointer"
-                    >
-                      <div className="font-bold text-[#0B1F4B]">Supervisor</div>
-                      <div className="text-gray-500 truncate">fahim@collabx.test</div>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleFillTestEmail('brock@collabx.test')}
-                      className="text-left p-1.5 rounded bg-white hover:bg-blue-50 border border-gray-200 cursor-pointer"
-                    >
-                      <div className="font-bold text-[#0B1F4B]">Researcher</div>
-                      <div className="text-gray-500 truncate">brock@collabx.test</div>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleFillTestEmail('admin@collabx.test')}
-                      className="text-left p-1.5 rounded bg-white hover:bg-blue-50 border border-gray-200 cursor-pointer"
-                    >
-                      <div className="font-bold text-[#0B1F4B]">Admin</div>
-                      <div className="text-gray-500 truncate">admin@collabx.test</div>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleFillTestEmail('gary@collabx.test')}
-                      className="text-left p-1.5 rounded bg-white hover:bg-red-50 border border-gray-200 cursor-pointer col-span-2"
-                    >
-                      <div className="font-bold text-red-600">Disabled Account (Test Rejection)</div>
-                      <div className="text-gray-500 truncate">gary@collabx.test</div>
-                    </button>
-                  </div>
-                  <p className="text-[10px] text-gray-400 italic">
-                    Clicking fills the email field. You must still provide the correct password to verify authentication.
-                  </p>
-                </div>
-              )}
-            </div>
-
           </div>
         </div>
 
@@ -535,28 +429,6 @@ export const LoginPage: React.FC<LoginPageProps> = ({
 
       </div>
 
-      {/* Complete Profile Modal for Authenticated Social Users */}
-      <OAuthModal
-        isOpen={isOAuthOpen}
-        onClose={() => {
-          setIsOAuthOpen(false);
-          setOauthProvider(null);
-          setSocialProfileData(null);
-        }}
-        provider={oauthProvider}
-        profileData={socialProfileData}
-        onSuccess={(user) => {
-          setIsOAuthOpen(false);
-          setOauthProvider(null);
-          setSocialProfileData(null);
-          onLoginSuccess(user);
-          if (returnUrl) {
-            onNavigate(returnUrl);
-          } else {
-            onNavigate(user.role === 'admin' ? '/admin' : user.role === 'supervisor' || user.role === 'researcher' ? '/researcher' : '/dashboard');
-          }
-        }}
-      />
 
       {/* Forgot Password Reset Modal */}
       <ForgotPasswordModal

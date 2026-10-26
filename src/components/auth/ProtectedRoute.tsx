@@ -1,29 +1,30 @@
-import React, { useEffect } from 'react';
-import { User } from '../../types';
+import React from 'react';
 import { LoginPage } from '../../pages/LoginPage';
+import { useAuth } from '../../contexts/AuthContext';
+import { User } from '../../types';
 
 interface ProtectedRouteProps {
   children: React.ReactNode;
-  currentUser: User | null;
-  authLoading: boolean;
   currentPath: string;
   onNavigate: (path: string) => void;
   message?: string;
+  currentUser?: User | null;
+  authLoading?: boolean;
 }
 
 export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
   children,
-  currentUser,
-  authLoading,
   currentPath,
   onNavigate,
   message = 'Please log in to continue'
 }) => {
-  // If authentication state is still resolving
-  if (authLoading) {
+  const { authStatus, currentUser } = useAuth();
+
+  // 1. If authentication state is still resolving
+  if (authStatus === 'loading') {
     return (
       <div className="min-h-[70vh] flex flex-col items-center justify-center p-8 space-y-4">
-        <div className="w-12 h-12 border-4 border-[#0B6BE6] border-t-transparent rounded-full animate-spin" />
+        <div className="w-12 h-12 border-4 border-[#2563EB] border-t-transparent rounded-full animate-spin" />
         <p className="text-xs font-bold text-[#0B2A55] tracking-wide animate-pulse">
           Verifying security credentials…
         </p>
@@ -31,13 +32,26 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
     );
   }
 
-  // If user is not authenticated, render Login with returnUrl and message
-  if (!currentUser) {
+  // 2. If user is in needsProfile state:
+  // Treated as NOT ready. No dashboard or protected page ever renders.
+  // The CompleteVerificationModal is mounted at the app root and overlays the screen.
+  if (authStatus === 'needsProfile') {
+    return (
+      <div className="min-h-[70vh] flex flex-col items-center justify-center p-8 space-y-4 text-center">
+        <div className="w-10 h-10 border-4 border-[#2563EB] border-t-transparent rounded-full animate-spin" />
+        <p className="text-xs font-bold text-[#0B2A55] tracking-wide">
+          Academic verification required. Please complete the verification dialog to proceed.
+        </p>
+      </div>
+    );
+  }
+
+  // 3. If signed out, render Login
+  if (authStatus === 'signedOut' || !currentUser) {
     return (
       <LoginPage
         onNavigate={onNavigate}
-        onLoginSuccess={(user) => {
-          // Return to the protected route requested
+        onLoginSuccess={() => {
           onNavigate(currentPath);
         }}
         message={message}
@@ -46,6 +60,6 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
     );
   }
 
-  // Authenticated: Render children
+  // 4. Ready: Render protected children
   return <>{children}</>;
 };
