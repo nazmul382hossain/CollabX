@@ -7,7 +7,9 @@ import {
   ChevronDown,
   User as UserIcon,
   LogOut,
-  FolderGit2
+  FolderGit2,
+  Scale,
+  Sparkles
 } from 'lucide-react';
 import { User } from '../../types';
 import { Avatar } from '../common/Avatar';
@@ -33,33 +35,65 @@ export const TopBar: React.FC<TopBarProps> = ({
   const [showHelp, setShowHelp] = useState(false);
   const [dropdownOpen, setDropdownOpen] = useState(false);
 
-  // Dynamic search placeholder per page
-  const getSearchPlaceholder = () => {
-    if (currentPath === '/projects') return 'Search projects, labs, areas, researchers…';
-    if (currentPath === '/dashboard') return 'Search projects, areas, papers…';
-    if (currentPath === '/saved') return 'Search saved projects…';
-    if (currentPath === '/researcher') return 'Search to match by fields, members…';
-    if (currentPath.includes('/discussion')) return 'Search discussions…';
-    if (currentPath.includes('/progress')) return 'Search research by title, supervisor…';
-    if (currentPath.startsWith('/admin')) return 'Search users, projects…';
-    if (currentPath === '/papers') return 'Search research papers, DOIs, authors…';
-    return 'Search projects, areas, papers…';
-  };
-
   const showHeaderPikachu = currentPath === '/dashboard';
+
+  const [localSearchInput, setLocalSearchInput] = useState('');
+
+  const handleSearchSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!localSearchInput.trim()) {
+      onOpenSearch();
+      return;
+    }
+    onNavigate(`/search?q=${encodeURIComponent(localSearchInput.trim())}`);
+  };
 
   return (
     <div className="bg-white border-b border-[#D5DDEB] px-4 sm:px-6 py-2.5 flex items-center justify-between gap-4 sticky top-16 z-30 shadow-2xs">
-      {/* Search Input Bar with magnifier icon */}
-      <div 
+      {/* Functional Interactive Consensus Search Bar for All Users (Student, Researcher, Admin) */}
+      <form 
+        onSubmit={handleSearchSubmit}
+        className="flex-1 max-w-xl relative cursor-pointer"
         onClick={onOpenSearch}
-        className="flex-1 max-w-xl relative cursor-pointer group"
       >
-        <div className="w-full bg-[#F4F8FD] hover:bg-[#eaf1fb] border border-[#D5DDEB] group-hover:border-[#1565E8] rounded-full py-2 pl-4 pr-10 text-xs sm:text-sm font-medium text-gray-500 transition-colors flex items-center justify-between shadow-2xs">
-          <span className="truncate">{getSearchPlaceholder()}</span>
-          <Search className="w-4 h-4 text-gray-400 group-hover:text-[#1565E8] transition-colors shrink-0" />
+        <div className="relative flex items-center">
+          <input
+            type="text"
+            value={localSearchInput}
+            onChange={(e) => setLocalSearchInput(e.target.value)}
+            placeholder="Ask research questions or search topics (Consensus AI)..."
+            className="w-full bg-[#F4F8FD] hover:bg-[#eaf1fb] focus:bg-white border border-[#D5DDEB] focus:border-[#1565E8] rounded-full py-2 pl-4 pr-32 sm:pr-36 text-xs sm:text-sm font-medium text-[#0B1F4B] placeholder-gray-400 transition-all focus:outline-hidden focus:ring-2 focus:ring-[#1565E8]/20 shadow-2xs cursor-pointer"
+            readOnly
+          />
+          <div className="absolute right-2 flex items-center gap-1 sm:gap-1.5">
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); onOpenSearch(); }}
+              className="inline-flex items-center gap-1 px-2 sm:px-2.5 py-0.5 rounded-full text-[10px] font-black bg-gradient-to-r from-blue-50 to-indigo-50 text-[#1565E8] border border-blue-200 hover:bg-blue-100 transition-colors cursor-pointer shrink-0"
+              title="Consensus AI Search"
+            >
+              <Scale className="w-3 h-3 text-[#F59E0B]" />
+              <span>Consensus</span>
+            </button>
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); onOpenSearch(); }}
+              className="p-1.5 rounded-full hover:bg-blue-100 text-[#1565E8] transition-colors cursor-pointer shrink-0"
+              title="Search globally"
+            >
+              <Search className="w-4 h-4 shrink-0 text-[#1565E8]" />
+            </button>
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); onOpenSearch(); }}
+              className="hidden sm:inline-block px-1.5 py-0.5 text-[10px] font-bold text-gray-400 bg-gray-100 hover:bg-gray-200 border border-gray-300 rounded cursor-pointer shrink-0"
+              title="Open full search modal (Ctrl+K)"
+            >
+              ⌘K
+            </button>
+          </div>
         </div>
-      </div>
+      </form>
 
       {/* Right Tools & Profile */}
       <div className="flex items-center gap-3">

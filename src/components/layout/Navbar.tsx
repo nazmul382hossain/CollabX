@@ -9,7 +9,9 @@ import {
   Settings, 
   FolderGit2, 
   ShieldCheck,
-  Bell
+  Bell,
+  Scale,
+  Sparkles
 } from 'lucide-react';
 import { User } from '../../types';
 import { Avatar } from '../common/Avatar';

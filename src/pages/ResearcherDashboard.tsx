@@ -19,6 +19,7 @@ import { Avatar } from '../components/common/Avatar';
 import { Badge } from '../components/common/Badge';
 import { AcademicCvModal } from '../components/common/AcademicCvModal';
 import { publicProfileService } from '../services/publicProfileService';
+import { ConsensusDashboardWidget } from '../components/common/ConsensusDashboardWidget';
 
 interface ResearcherDashboardProps {
   currentUser: User;
@@ -152,6 +153,13 @@ export const ResearcherDashboard: React.FC<ResearcherDashboardProps> = ({ curren
           <span className="text-[11px] font-semibold text-[#E53935]">Awaiting your review</span>
         </div>
       </div>
+
+      {/* Consensus AI Research & Evidence Assistant for Faculty / Researchers */}
+      <ConsensusDashboardWidget 
+        currentUser={currentUser} 
+        onNavigate={onNavigate}
+        defaultTopic="Blood biomarkers for early disease detection"
+      />
 
       {/* 2 Charts Grid matching Screenshot 12: Bar Chart + Status Pie Chart */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">

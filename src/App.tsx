@@ -45,6 +45,21 @@ import { AboutPage, ContactPage, LegalPage } from './pages/AboutContactLegalPage
 function AppContent() {
   const { authStatus, currentUser, signOutUser } = useAuth();
   
+  // Helper to extract query parameters from URL hash or search string
+  const getInitialQuery = () => {
+    if (typeof window !== 'undefined') {
+      const hash = window.location.hash || '';
+      const search = window.location.search || '';
+      if (hash.includes('?')) {
+        return hash.substring(hash.indexOf('?') + 1);
+      }
+      if (search.includes('?')) {
+        return search.substring(search.indexOf('?') + 1);
+      }
+    }
+    return '';
+  };
+
   // Read path from URL Hash (HashRouter support) or query parameters
   const getInitialPath = () => {
     if (typeof window !== 'undefined') {
@@ -69,6 +84,7 @@ function AppContent() {
   };
 
   const [currentPath, setCurrentPath] = useState<string>(getInitialPath());
+  const [currentQuery, setCurrentQuery] = useState<string>(getInitialQuery());
   const [searchModalOpen, setSearchModalOpen] = useState(false);
   const [unreadNotifications, setUnreadNotifications] = useState(0);
   const [activeToast, setActiveToast] = useState<{
@@ -177,9 +193,11 @@ function AppContent() {
   // HashRouter hashchange event listener
   useEffect(() => {
     const handleHashChange = () => {
-      const hashPath = window.location.hash.replace('#', '').split('?')[0];
-      const clean = hashPath.startsWith('/') ? hashPath : `/${hashPath}`;
+      const hashContent = window.location.hash.replace('#', '');
+      const [hashBase, hashQuery] = hashContent.split('?');
+      const clean = hashBase.startsWith('/') ? hashBase : `/${hashBase}`;
       setCurrentPath(clean || '/');
+      setCurrentQuery(hashQuery || '');
       window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
       document.documentElement.scrollTop = 0;
       document.body.scrollTop = 0;
@@ -208,8 +226,10 @@ function AppContent() {
   }, []);
 
   const handleNavigate = (path: string) => {
-    const basePath = path.split('?')[0];
-    setCurrentPath(basePath.startsWith('/') ? basePath : `/${basePath}`);
+    const [basePath, searchStr] = path.split('?');
+    const cleanBase = basePath.startsWith('/') ? basePath : `/${basePath}`;
+    setCurrentPath(cleanBase);
+    setCurrentQuery(searchStr || '');
     window.location.hash = path;
     window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
     document.documentElement.scrollTop = 0;
@@ -326,7 +346,15 @@ function AppContent() {
       if (parts.length === 3 && parts[2]) {
         return <ProjectDetailsPage projectId={parts[2]} currentUser={currentUser} onNavigate={handleNavigate} />;
       }
-      return <ProjectsPage currentUser={currentUser} onNavigate={handleNavigate} />;
+      const queryParams = new URLSearchParams(currentQuery);
+      return (
+        <ProjectsPage 
+          currentUser={currentUser} 
+          onNavigate={handleNavigate} 
+          initialAreaSlug={queryParams.get('area') || undefined}
+          initialSearchQuery={queryParams.get('q') || undefined}
+        />
+      );
     }
 
     // Research Papers public catalog & details
@@ -340,8 +368,8 @@ function AppContent() {
 
     // Global Search
     if (currentPath.startsWith('/search')) {
-      const urlParams = new URLSearchParams(currentPath.split('?')[1] || '');
-      return <GlobalSearchPage initialQuery={urlParams.get('q') || ''} onNavigate={handleNavigate} />;
+      const queryParams = new URLSearchParams(currentQuery);
+      return <GlobalSearchPage initialQuery={queryParams.get('q') || ''} onNavigate={handleNavigate} />;
     }
 
     // ---------------------------------------------------------

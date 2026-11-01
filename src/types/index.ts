@@ -292,9 +292,30 @@ export interface AiDraft {
   updatedAt: string;
 }
 
+export interface ConsensusAnalysis {
+  query: string;
+  verdict: string;
+  summary: string;
+  agreement: {
+    yesPercent: number;
+    possiblyPercent: number;
+    noPercent: number;
+  };
+  confidence: 'High Confidence' | 'Moderate Confidence' | 'Emerging Field';
+  analyzedCount: number;
+  studyTypesCount: {
+    metaAnalyses: number;
+    rcts: number;
+    cohortOrEmpirical: number;
+    reviews: number;
+    theses: number;
+  };
+  keyFindings: string[];
+}
+
 export interface ExternalScholarlyResult {
   id: string;
-  source: 'OpenAlex' | 'Crossref' | 'arXiv' | 'Semantic Scholar';
+  source: 'OpenAlex' | 'Crossref' | 'arXiv' | 'Semantic Scholar' | 'Europe PMC' | 'PubMed' | 'Global Thesis Repository';
   title: string;
   authors: string[];
   year: number;
@@ -303,6 +324,15 @@ export interface ExternalScholarlyResult {
   abstract: string;
   oaPdfUrl?: string;
   url: string;
+  documentType?: 'Research Paper' | 'Thesis' | 'Dissertation' | 'Conference Proceeding' | 'Preprint' | 'Review Article';
+  venue?: string;
+  institution?: string;
+  // Consensus-specific fields
+  studyDesign?: 'Meta-Analysis' | 'Systematic Review' | 'Randomized Controlled Trial (RCT)' | 'Cohort Study' | 'Comparative Empirical Analysis' | 'Doctoral Dissertation' | 'Review Article';
+  sampleSize?: string;
+  keyTakeaway?: string;
+  consensusStance?: 'supports' | 'neutral' | 'disputes';
+  qualityScore?: number;
 }
 
 export interface ContactMessage {

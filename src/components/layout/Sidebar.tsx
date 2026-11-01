@@ -67,7 +67,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         { label: 'My Projects', path: '/my-projects', icon: FolderGit2, activeStyle: 'blue' },
         { label: 'Applications', path: '/applications', icon: UserCheck, activeStyle: 'blue' },
         { label: 'Research Papers', path: '/papers', icon: BookOpen, activeStyle: 'blue' },
-        { label: 'AI Paper Writer', path: '/ai-writer', icon: Sparkles, activeStyle: 'gold', highlight: true },
+        { label: 'AI Paper Writer', path: '/ai-writer', icon: Sparkles, activeStyle: 'gold' },
         { label: 'Calendar', path: '/calendar', icon: Calendar, activeStyle: 'green' },
         { label: 'Notifications', path: '/notifications', icon: Bell, activeStyle: 'green' },
         { label: 'Settings', path: '/settings', icon: Settings, activeStyle: 'gray' }
@@ -81,7 +81,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       { label: 'Saved Projects', path: '/saved', icon: Bookmark, activeStyle: 'blue' },
       { label: 'My Projects', path: '/my-projects', icon: FolderGit2, activeStyle: 'blue' },
       { label: 'Research Papers', path: '/papers', icon: BookOpen, activeStyle: 'blue' },
-      { label: 'AI Paper Writer', path: '/ai-writer', icon: Sparkles, activeStyle: 'gold', highlight: true },
+      { label: 'AI Paper Writer', path: '/ai-writer', icon: Sparkles, activeStyle: 'gold' },
       { label: 'Calendar', path: '/calendar', icon: Calendar, activeStyle: 'green' },
       { label: 'Notifications', path: '/notifications', icon: Bell, activeStyle: 'green' },
       { label: 'Settings', path: '/settings', icon: Settings, activeStyle: 'gray' }

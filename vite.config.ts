@@ -9,10 +9,23 @@ export default defineConfig(() => {
     base: './',
     build: {
       outDir: 'dist',
+      chunkSizeWarningLimit: 1600,
+      rollupOptions: {
+        output: {
+          manualChunks(id) {
+            if (id.includes('node_modules/firebase/')) {
+              return 'firebase-bundle';
+            }
+            if (id.includes('node_modules/lucide-react/')) {
+              return 'icons-bundle';
+            }
+          }
+        }
+      }
     },
     resolve: {
       alias: {
-        '@': path.resolve(__dirname, '.'),
+        '@': path.resolve(import.meta.dirname, '.'),
       },
     },
     server: {

@@ -6,7 +6,9 @@ import {
   Calendar, 
   Users, 
   Building2,
-  BookOpen
+  BookOpen,
+  Scale,
+  Sparkles
 } from 'lucide-react';
 import { storage } from '../services/storage';
 import { MOCK_RESEARCH_AREAS } from '../data/mock';
@@ -60,7 +62,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onNavigate, onOpenSear
   const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (heroSearch.trim()) {
-      onNavigate(`/projects?q=${encodeURIComponent(heroSearch.trim())}`);
+      onNavigate(`/search?q=${encodeURIComponent(heroSearch.trim())}`);
     } else {
       onOpenSearch();
     }

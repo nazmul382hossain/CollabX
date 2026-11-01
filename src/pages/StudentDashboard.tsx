@@ -18,6 +18,7 @@ import { storage } from '../services/storage';
 import { RecommendationService } from '../services/recommendationService';
 import { PikachuMascot } from '../components/common/PikachuMascot';
 import { Badge } from '../components/common/Badge';
+import { ConsensusDashboardWidget } from '../components/common/ConsensusDashboardWidget';
 
 interface StudentDashboardProps {
   currentUser: User;
@@ -144,6 +145,13 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ currentUser,
           <span className="text-[11px] font-semibold text-gray-500">Bookmarked projects</span>
         </div>
       </div>
+
+      {/* Consensus AI Research & Evidence Assistant for Students */}
+      <ConsensusDashboardWidget 
+        currentUser={currentUser} 
+        onNavigate={onNavigate}
+        defaultTopic="Does exercise improve cognitive function?"
+      />
 
       {/* Recommended Projects List matching Screenshot 7 */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
