@@ -22,7 +22,6 @@ import {
 import { storage } from '../../services/storage';
 import { ExternalSearchService } from '../../services/externalSearchService';
 import { ConsensusService } from '../../services/consensusService';
-import { ConsensusMeterCard } from '../common/ConsensusMeterCard';
 import { Project, Paper, ExternalScholarlyResult, PublicProfile } from '../../types';
 import { publicProfileService } from '../../services/publicProfileService';
 
@@ -360,15 +359,6 @@ export const SearchModal: React.FC<SearchModalProps> = ({
               </div>
               <span className="text-[11px] text-gray-500 hidden sm:inline">Consensus AI • OpenAlex & Europe PMC</span>
             </div>
-          )}
-
-          {/* CONSENSUS METER & EVIDENCE SYNTHESIS CARD */}
-          {consensusAnalysis && consensusMode && (activeTab === 'all' || activeTab === 'consensus' || activeTab === 'scholarly') && (
-            <ConsensusMeterCard 
-              analysis={consensusAnalysis}
-              selectedStudyType={studyDesignFilter}
-              onFilterStudyType={setStudyDesignFilter}
-            />
           )}
 
           {/* SECTION: Global Research Papers & Theses */}

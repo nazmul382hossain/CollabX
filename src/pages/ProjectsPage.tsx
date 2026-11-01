@@ -24,7 +24,6 @@ import { storage } from '../services/storage';
 import { RecommendationService } from '../services/recommendationService';
 import { ExternalSearchService } from '../services/externalSearchService';
 import { ConsensusService } from '../services/consensusService';
-import { ConsensusMeterCard } from '../components/common/ConsensusMeterCard';
 import { RESEARCH_AREAS } from '../data/seedData';
 import { Project, User, ExternalScholarlyResult, Paper } from '../types';
 import { Badge } from '../components/common/Badge';
@@ -518,15 +517,6 @@ export const ProjectsPage: React.FC<ProjectsPageProps> = ({
           {/* 1. Global Scholarly Research Papers & Theses Section */}
           {hasSearch && (activeSearchTab === 'all' || activeSearchTab === 'consensus' || activeSearchTab === 'scholarly') && (
             <div className="space-y-4">
-              {/* CONSENSUS METER CARD */}
-              {consensusAnalysis && (activeSearchTab === 'all' || activeSearchTab === 'consensus') && (
-                <ConsensusMeterCard 
-                  analysis={consensusAnalysis}
-                  selectedStudyType={studyDesignFilter}
-                  onFilterStudyType={setStudyDesignFilter}
-                />
-              )}
-
               <div className="flex items-center justify-between">
                 <h3 className="font-extrabold text-sm sm:text-base text-[#0B2A55] flex items-center gap-2">
                   <Sparkles className="w-4 h-4 text-[#FFC83D]" />

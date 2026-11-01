@@ -22,7 +22,6 @@ import {
 import { storage } from '../services/storage';
 import { ExternalSearchService } from '../services/externalSearchService';
 import { ConsensusService } from '../services/consensusService';
-import { ConsensusMeterCard } from '../components/common/ConsensusMeterCard';
 import { ExternalScholarlyResult, Project, Paper, PublicProfile } from '../types';
 import { publicProfileService } from '../services/publicProfileService';
 
@@ -416,15 +415,6 @@ export const GlobalSearchPage: React.FC<GlobalSearchPageProps> = ({ initialQuery
                 Connected to OpenAlex, Europe PMC, Crossref & Open Access Institutional Archives
               </span>
             </div>
-
-            {/* CONSENSUS METER & EVIDENCE SYNTHESIS CARD */}
-            {consensusAnalysis && (activeTab === 'global' || activeTab === 'consensus') && (
-              <ConsensusMeterCard 
-                analysis={consensusAnalysis}
-                selectedStudyType={studyDesignFilter}
-                onFilterStudyType={setStudyDesignFilter}
-              />
-            )}
 
             {/* Scholarly Cards List */}
             {filteredScholarly.length > 0 ? (
