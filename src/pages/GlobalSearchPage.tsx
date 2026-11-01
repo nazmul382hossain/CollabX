@@ -16,12 +16,10 @@ import {
   SlidersHorizontal,
   ChevronDown,
   Quote,
-  Share2,
-  Scale
+  Share2
 } from 'lucide-react';
 import { storage } from '../services/storage';
 import { ExternalSearchService } from '../services/externalSearchService';
-import { ConsensusService } from '../services/consensusService';
 import { ExternalScholarlyResult, Project, Paper, PublicProfile } from '../types';
 import { publicProfileService } from '../services/publicProfileService';
 
@@ -44,13 +42,7 @@ export const GlobalSearchPage: React.FC<GlobalSearchPageProps> = ({ initialQuery
   const [selectedSource, setSelectedSource] = useState<string>('all');
   const [openAccessOnly, setOpenAccessOnly] = useState<boolean>(false);
   const [sortBy, setSortBy] = useState<'relevance' | 'citations' | 'year'>('relevance');
-  const [activeTab, setActiveTab] = useState<'global' | 'consensus' | 'local_papers' | 'local_projects' | 'scholars'>('global');
-
-  // Consensus Analysis Memo
-  const consensusAnalysis = React.useMemo(() => {
-    if (!query.trim() || scholarlyResults.length === 0) return null;
-    return ConsensusService.generateConsensusAnalysis(query, scholarlyResults);
-  }, [query, scholarlyResults]);
+  const [activeTab, setActiveTab] = useState<'global' | 'local_papers' | 'local_projects' | 'scholars'>('global');
 
   const projects = storage.getProjects();
   const papers = storage.getPapers();
@@ -273,18 +265,6 @@ export const GlobalSearchPage: React.FC<GlobalSearchPageProps> = ({ initialQuery
             </button>
 
             <button
-              onClick={() => { setActiveTab('consensus'); setStudyDesignFilter('all'); }}
-              className={`px-4 py-2.5 rounded-xl transition-all cursor-pointer flex items-center gap-2 ${
-                activeTab === 'consensus'
-                  ? 'bg-gradient-to-r from-[#1565E8] to-[#4F46E5] text-white shadow-sm'
-                  : 'bg-indigo-50 text-[#4338CA] border border-indigo-200 hover:bg-indigo-100'
-              }`}
-            >
-              <Scale className="w-4 h-4 text-[#F59E0B]" />
-              <span>Consensus AI Meter</span>
-            </button>
-
-            <button
               onClick={() => setActiveTab('local_papers')}
               className={`px-4 py-2.5 rounded-xl transition-all cursor-pointer flex items-center gap-2 ${
                 activeTab === 'local_papers'
@@ -473,22 +453,6 @@ export const GlobalSearchPage: React.FC<GlobalSearchPageProps> = ({ initialQuery
                               {item.sampleSize}
                             </span>
                           )}
-
-                          {/* Consensus Agreement Stance Badge */}
-                          {item.consensusStance && (
-                            <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold flex items-center gap-1 ${
-                              item.consensusStance === 'supports' 
-                                ? 'bg-[#D1FAE5] text-[#065F46] border border-[#A7F3D0]'
-                                : item.consensusStance === 'neutral'
-                                  ? 'bg-[#FEF3C7] text-[#92400E] border border-[#FDE68A]'
-                                  : 'bg-[#FFE4E6] text-[#9F1239] border border-[#FECDD3]'
-                            }`}>
-                              <span className={`w-1.5 h-1.5 rounded-full ${
-                                item.consensusStance === 'supports' ? 'bg-[#10B981]' : item.consensusStance === 'neutral' ? 'bg-[#F59E0B]' : 'bg-[#EF4444]'
-                              }`} />
-                              {item.consensusStance === 'supports' ? 'Supports' : item.consensusStance === 'neutral' ? 'Context Dependent' : 'Disputes'}
-                            </span>
-                          )}
                         </div>
 
                         {/* DOI Badge */}
@@ -517,19 +481,6 @@ export const GlobalSearchPage: React.FC<GlobalSearchPageProps> = ({ initialQuery
                         <div className="text-xs font-bold text-[#0B6BE6] flex items-center gap-1.5">
                           <BookOpen className="w-3.5 h-3.5" />
                           <span>{item.venue}</span>
-                        </div>
-                      )}
-
-                      {/* CONSENSUS KEY TAKEAWAY CALLOUT BOX */}
-                      {item.keyTakeaway && (
-                        <div className="p-3 sm:p-3.5 rounded-2xl bg-gradient-to-r from-[#F0F7FF] via-[#EEF4FF] to-[#FAF5FF] border border-[#BFDBFE] text-xs text-[#1E3A8A] flex items-start gap-2.5 shadow-2xs">
-                          <div className="px-2 py-0.5 rounded-lg text-[10px] font-black bg-[#1565E8] text-white shrink-0 uppercase tracking-wider flex items-center gap-1 mt-0.5">
-                            <Sparkles className="w-2.5 h-2.5 text-[#FCD34D]" />
-                            Consensus Takeaway
-                          </div>
-                          <span className="font-semibold text-gray-800 leading-relaxed italic">
-                            "{item.keyTakeaway}"
-                          </span>
                         </div>
                       )}
 

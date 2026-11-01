@@ -7,9 +7,7 @@ import {
   ChevronDown,
   User as UserIcon,
   LogOut,
-  FolderGit2,
-  Scale,
-  Sparkles
+  FolderGit2
 } from 'lucide-react';
 import { User } from '../../types';
 import { Avatar } from '../common/Avatar';
@@ -50,7 +48,7 @@ export const TopBar: React.FC<TopBarProps> = ({
 
   return (
     <div className="bg-white border-b border-[#D5DDEB] px-4 sm:px-6 py-2.5 flex items-center justify-between gap-4 sticky top-16 z-30 shadow-2xs">
-      {/* Functional Interactive Consensus Search Bar for All Users (Student, Researcher, Admin) */}
+      {/* Functional Interactive Search Bar for All Users (Student, Researcher, Admin) */}
       <form 
         onSubmit={handleSearchSubmit}
         className="flex-1 max-w-xl relative cursor-pointer"
@@ -61,20 +59,11 @@ export const TopBar: React.FC<TopBarProps> = ({
             type="text"
             value={localSearchInput}
             onChange={(e) => setLocalSearchInput(e.target.value)}
-            placeholder="Ask research questions or search topics (Consensus AI)..."
-            className="w-full bg-[#F4F8FD] hover:bg-[#eaf1fb] focus:bg-white border border-[#D5DDEB] focus:border-[#1565E8] rounded-full py-2 pl-4 pr-32 sm:pr-36 text-xs sm:text-sm font-medium text-[#0B1F4B] placeholder-gray-400 transition-all focus:outline-hidden focus:ring-2 focus:ring-[#1565E8]/20 shadow-2xs cursor-pointer"
+            placeholder="Search projects, research papers, topics, DOIs..."
+            className="w-full bg-[#F4F8FD] hover:bg-[#eaf1fb] focus:bg-white border border-[#D5DDEB] focus:border-[#1565E8] rounded-full py-2 pl-4 pr-24 text-xs sm:text-sm font-medium text-[#0B1F4B] placeholder-gray-400 transition-all focus:outline-hidden focus:ring-2 focus:ring-[#1565E8]/20 shadow-2xs cursor-pointer"
             readOnly
           />
           <div className="absolute right-2 flex items-center gap-1 sm:gap-1.5">
-            <button
-              type="button"
-              onClick={(e) => { e.stopPropagation(); onOpenSearch(); }}
-              className="inline-flex items-center gap-1 px-2 sm:px-2.5 py-0.5 rounded-full text-[10px] font-black bg-gradient-to-r from-blue-50 to-indigo-50 text-[#1565E8] border border-blue-200 hover:bg-blue-100 transition-colors cursor-pointer shrink-0"
-              title="Consensus AI Search"
-            >
-              <Scale className="w-3 h-3 text-[#F59E0B]" />
-              <span>Consensus</span>
-            </button>
             <button
               type="button"
               onClick={(e) => { e.stopPropagation(); onOpenSearch(); }}

@@ -14,14 +14,12 @@ import {
   FileText, 
   Filter, 
   Download,
-  Scale,
   CheckCircle2,
   BarChart3,
   Quote
 } from 'lucide-react';
 import { storage } from '../../services/storage';
 import { ExternalSearchService } from '../../services/externalSearchService';
-import { ConsensusService } from '../../services/consensusService';
 import { Project, Paper, ExternalScholarlyResult, PublicProfile } from '../../types';
 import { publicProfileService } from '../../services/publicProfileService';
 
@@ -39,10 +37,9 @@ export const SearchModal: React.FC<SearchModalProps> = ({
   initialQuery = ''
 }) => {
   const [query, setQuery] = useState(initialQuery);
-  const [activeTab, setActiveTab] = useState<'all' | 'consensus' | 'scholarly' | 'theses' | 'papers' | 'projects' | 'people'>('all');
+  const [activeTab, setActiveTab] = useState<'all' | 'scholarly' | 'theses' | 'papers' | 'projects' | 'people'>('all');
   const [scholarlyFilter, setScholarlyFilter] = useState<'all' | 'thesis' | 'paper' | 'preprint'>('all');
   const [studyDesignFilter, setStudyDesignFilter] = useState<string>('all');
-  const [consensusMode, setConsensusMode] = useState<boolean>(true);
   const [scholarlyResults, setScholarlyResults] = useState<ExternalScholarlyResult[]>([]);
   const [loadingScholarly, setLoadingScholarly] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
@@ -89,12 +86,6 @@ export const SearchModal: React.FC<SearchModalProps> = ({
 
     return () => clearTimeout(timer);
   }, [query]);
-
-  // Consensus Analysis calculation
-  const consensusAnalysis = useMemo(() => {
-    if (!query.trim() || scholarlyResults.length === 0) return null;
-    return ConsensusService.generateConsensusAnalysis(query, scholarlyResults);
-  }, [query, scholarlyResults]);
 
   if (!isOpen) return null;
 
@@ -177,10 +168,10 @@ export const SearchModal: React.FC<SearchModalProps> = ({
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/60 backdrop-blur-xs pt-8 sm:pt-12 px-3 sm:px-4 animate-fade-in">
       <div className="bg-white rounded-3xl max-w-4xl w-full max-h-[90vh] flex flex-col overflow-hidden shadow-2xl border border-[#D5DDEB]">
-        {/* Search Input Bar with Consensus Badge */}
+        {/* Search Input Bar */}
         <div className="p-4 sm:p-5 border-b border-[#E3EAF3] flex items-center gap-3 bg-white">
-          <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-[#1565E8] to-[#4F46E5] flex items-center justify-center shrink-0 text-white shadow-xs">
-            <Scale className="w-5 h-5" />
+          <div className="w-10 h-10 rounded-2xl bg-[#EEF4FF] flex items-center justify-center shrink-0 text-[#1565E8] shadow-2xs">
+            <Search className="w-5 h-5 text-[#1565E8]" />
           </div>
           <div className="flex-1 min-w-0">
             <input
@@ -188,32 +179,15 @@ export const SearchModal: React.FC<SearchModalProps> = ({
               type="text"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="Ask any research question or search papers (Consensus AI)..."
+              placeholder="Search research papers, thesis, projects, authors (e.g. medical)..."
               className="w-full text-base sm:text-lg font-bold text-[#0B2A55] placeholder-gray-400 focus:outline-hidden"
             />
             <div className="text-[11px] text-gray-400 mt-0.5 flex flex-wrap items-center gap-2">
-              <span className="flex items-center gap-1 text-[#1565E8] font-bold">
-                <Sparkles className="w-3 h-3 text-[#F59E0B]" />
-                Consensus AI Search Enabled
-              </span>
+              <span className="font-semibold text-gray-500">Universal Academic Works</span>
               <span>•</span>
               <span className="hidden sm:inline">OpenAlex (250M+), Europe PMC, Crossref & Theses</span>
             </div>
           </div>
-
-          {/* Consensus Mode Toggle Button */}
-          <button
-            onClick={() => setConsensusMode(!consensusMode)}
-            className={`hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-              consensusMode 
-                ? 'bg-gradient-to-r from-[#1565E8] to-[#4F46E5] text-white shadow-xs' 
-                : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
-            }`}
-            title="Toggle Consensus AI Evidence Synthesis & Meter"
-          >
-            <Scale className="w-3.5 h-3.5" />
-            <span>Consensus {consensusMode ? 'ON' : 'OFF'}</span>
-          </button>
 
           {query && (
             <button
@@ -240,19 +214,6 @@ export const SearchModal: React.FC<SearchModalProps> = ({
             }`}
           >
             All Academic Literature
-          </button>
-
-          {/* Prominent Consensus Tab */}
-          <button
-            onClick={() => { setActiveTab('consensus'); setScholarlyFilter('all'); setStudyDesignFilter('all'); }}
-            className={`px-3.5 py-1.5 rounded-xl whitespace-nowrap cursor-pointer transition-all flex items-center gap-1.5 ${
-              activeTab === 'consensus' 
-                ? 'bg-gradient-to-r from-[#1565E8] to-[#4F46E5] text-white shadow-xs' 
-                : 'bg-indigo-50 text-[#4338CA] hover:bg-indigo-100 border border-indigo-200'
-            }`}
-          >
-            <Scale className="w-3.5 h-3.5 text-[#F59E0B]" />
-            <span>Consensus AI Meter ({scholarlyResults.length})</span>
           </button>
 
           <button
@@ -320,20 +281,20 @@ export const SearchModal: React.FC<SearchModalProps> = ({
           {!query.trim() && (
             <div className="py-6 space-y-4">
               <div className="text-center space-y-2 max-w-lg mx-auto">
-                <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-[#1565E8] to-[#4F46E5] text-white flex items-center justify-center mx-auto shadow-md">
-                  <Scale className="w-6 h-6" />
+                <div className="w-12 h-12 rounded-2xl bg-[#EEF4FF] text-[#1565E8] flex items-center justify-center mx-auto shadow-2xs">
+                  <Search className="w-6 h-6" />
                 </div>
                 <h3 className="text-base font-extrabold text-[#0B2A55]">
-                  Search with Consensus AI Scientific Synthesis
+                  Search Global Academic Literature & Theses
                 </h3>
                 <p className="text-xs text-gray-500 leading-relaxed">
-                  Ask any research question (e.g. "Does exercise improve cognitive function?") or search any clinical / technical topic. CollabX synthesizes peer-reviewed consensus and extracts direct takeaways from global literature.
+                  Search across 250M+ peer-reviewed works, dissertations, and conference proceedings from OpenAlex, Europe PMC, and Crossref.
                 </p>
               </div>
 
               <div className="pt-2">
                 <span className="block text-[11px] font-bold uppercase tracking-wider text-gray-400 mb-2.5">
-                  Try asking a research question or topic:
+                  Try searching a topic or keyword:
                 </span>
                 <div className="flex flex-wrap gap-2">
                   {quickSearchSuggestions.map((s) => (
@@ -355,19 +316,19 @@ export const SearchModal: React.FC<SearchModalProps> = ({
             <div className="p-4 rounded-2xl bg-[#EBF3FE] border border-[#BFDBFE] flex items-center justify-between text-xs text-[#0B6BE6]">
               <div className="flex items-center gap-2 font-bold">
                 <div className="w-4 h-4 border-2 border-[#0B6BE6] border-t-transparent rounded-full animate-spin" />
-                <span>Synthesizing scientific consensus across 250M+ works for "{query}"...</span>
+                <span>Searching global works for "{query}"...</span>
               </div>
-              <span className="text-[11px] text-gray-500 hidden sm:inline">Consensus AI • OpenAlex & Europe PMC</span>
+              <span className="text-[11px] text-gray-500 hidden sm:inline">OpenAlex & Europe PMC</span>
             </div>
           )}
 
           {/* SECTION: Global Research Papers & Theses */}
-          {(activeTab === 'all' || activeTab === 'consensus' || activeTab === 'scholarly' || activeTab === 'theses') && (
+          {(activeTab === 'all' || activeTab === 'scholarly' || activeTab === 'theses') && (
             <div className="space-y-3">
               <div className="flex items-center justify-between">
                 <h3 className="font-extrabold text-sm sm:text-base text-[#0B2A55] flex items-center gap-2">
                   <Sparkles className="w-4 h-4 text-[#FFC83D]" />
-                  Global Academic Works & Consensus Evidence ({filteredScholarly.length})
+                  Global Academic Works ({filteredScholarly.length})
                 </h3>
                 {query.trim() && (
                   <div className="flex items-center gap-1.5 text-xs">
@@ -433,22 +394,6 @@ export const SearchModal: React.FC<SearchModalProps> = ({
                               {s.sampleSize}
                             </span>
                           )}
-
-                          {/* Consensus Agreement Stance Badge */}
-                          {s.consensusStance && (
-                            <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold flex items-center gap-1 ${
-                              s.consensusStance === 'supports' 
-                                ? 'bg-[#D1FAE5] text-[#065F46] border border-[#A7F3D0]'
-                                : s.consensusStance === 'neutral'
-                                  ? 'bg-[#FEF3C7] text-[#92400E] border border-[#FDE68A]'
-                                  : 'bg-[#FFE4E6] text-[#9F1239] border border-[#FECDD3]'
-                            }`}>
-                              <span className={`w-1.5 h-1.5 rounded-full ${
-                                s.consensusStance === 'supports' ? 'bg-[#10B981]' : s.consensusStance === 'neutral' ? 'bg-[#F59E0B]' : 'bg-[#EF4444]'
-                              }`} />
-                              {s.consensusStance === 'supports' ? 'Supports' : s.consensusStance === 'neutral' ? 'Context Dependent' : 'Disputes'}
-                            </span>
-                          )}
                         </div>
 
                         {/* Paper Title */}
@@ -464,19 +409,6 @@ export const SearchModal: React.FC<SearchModalProps> = ({
                           <p className="text-xs font-semibold text-[#1565E8]">
                             {s.venue}
                           </p>
-                        )}
-
-                        {/* CONSENSUS KEY TAKEAWAY CALLOUT BOX */}
-                        {s.keyTakeaway && (
-                          <div className="p-3 rounded-2xl bg-gradient-to-r from-[#F0F7FF] via-[#EEF4FF] to-[#FAF5FF] border border-[#BFDBFE] text-xs text-[#1E3A8A] flex items-start gap-2.5 shadow-2xs">
-                            <div className="px-2 py-0.5 rounded-lg text-[10px] font-black bg-[#1565E8] text-white shrink-0 uppercase tracking-wider flex items-center gap-1 mt-0.5">
-                              <Sparkles className="w-2.5 h-2.5 text-[#FCD34D]" />
-                              Consensus Takeaway
-                            </div>
-                            <span className="font-medium text-gray-800 leading-relaxed italic">
-                              "{s.keyTakeaway}"
-                            </span>
-                          </div>
                         )}
 
                         {/* Abstract */}
@@ -639,12 +571,12 @@ export const SearchModal: React.FC<SearchModalProps> = ({
           )}
         </div>
 
-        {/* Modal Footer with Consensus attribution & Full Search Page Link */}
+        {/* Modal Footer with Attribution & Full Search Page Link */}
         <div className="px-6 py-3.5 bg-[#F8FAFC] border-t border-[#E3EAF3] flex flex-wrap items-center justify-between text-xs text-gray-500 gap-2">
           <div className="flex items-center gap-2">
             <span className="w-2 h-2 rounded-full bg-emerald-500" />
             <span className="font-medium">
-              Powered by <span className="font-bold text-[#0B2A55]">CollabX Global Index</span> + <span className="font-bold text-[#1565E8]">Consensus AI</span> + OpenAlex & Europe PMC
+              Powered by <span className="font-bold text-[#0B2A55]">CollabX Global Index</span> + OpenAlex & Europe PMC
             </span>
           </div>
           <button
