@@ -84,11 +84,43 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           verified: matched.verified ?? true
         };
         storage.addUser(readyUser);
-        storage.setCurrentUser(readyUser.id);
+        storage.establishAuthenticatedSession(readyUser);
         setCurrentUser(readyUser);
         setAuthStatus('ready');
         return true;
       }
+
+      if (isPasswordUser) {
+        const cleanEmail = (fbUser.email || '').toLowerCase();
+        const readyUser: User = {
+          id: fbUser.uid,
+          name: fbUser.displayName || cleanEmail.split('@')[0] || 'Academic Scholar',
+          email: fbUser.email || '',
+          role: 'student',
+          status: 'active',
+          authProvider: 'password',
+          avatar: fbUser.photoURL || '',
+          headline: 'Student Researcher • Computer Science & Engineering',
+          department: 'Computer Science and Engineering',
+          institution: 'Port City International University',
+          bio: 'CollabX student collaborating in academic research and innovation projects.',
+          interests: ['Artificial Intelligence', 'Data Science'],
+          skills: ['Python', 'Data Analysis'],
+          links: {},
+          verified: true,
+          profileComplete: true,
+          verificationStatus: 'verified',
+          emailVerified: fbUser.emailVerified,
+          photoURL: fbUser.photoURL || undefined,
+          createdAt: new Date().toISOString()
+        };
+        storage.addUser(readyUser);
+        storage.establishAuthenticatedSession(readyUser);
+        setCurrentUser(readyUser);
+        setAuthStatus('ready');
+        return true;
+      }
+
       return false;
     };
 
@@ -144,7 +176,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           };
 
           storage.addUser(fullUser);
-          storage.setCurrentUser(fbUser.uid);
+          storage.establishAuthenticatedSession(fullUser);
           setCurrentUser(fullUser);
           console.log(`[auth] transition -> ready (uid=${fbUser.uid}, doc exists=true, profileComplete=true, role=${fullUser.role})`);
           setAuthStatus('ready');
@@ -154,7 +186,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           setAuthStatus('needsProfile');
         }
       } else {
-        // Document does NOT exist in Firestore: check local profile for password sign-ups before requiring social profile completion
+        // Document does NOT exist in Firestore: check local/password fallback before requiring social profile completion
         if (resolveLocalFallback()) return;
         setCurrentUser(null);
         console.log(`[auth] transition -> needsProfile (uid=${fbUser.uid}, doc exists=false)`);

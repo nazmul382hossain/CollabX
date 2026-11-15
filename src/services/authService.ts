@@ -129,13 +129,19 @@ class AuthService {
     // Attempt authentic Firebase Auth & Firestore verification first
     let fbLoginErrorCode = '';
     if (auth && db && isFirebaseConfigured()) {
+      manualRegistrationInProgress = true;
       try {
         const cred = await fbSignIn(auth, cleanEmail, cleanPassword);
         const fbUser = cred.user;
         const userDocRef = doc(db, 'users', fbUser.uid);
-        const userSnap = await getDoc(userDocRef);
+        let userSnap;
+        try {
+          userSnap = await getDoc(userDocRef);
+        } catch {
+          userSnap = null;
+        }
 
-        if (userSnap.exists()) {
+        if (userSnap && userSnap.exists()) {
           const firestoreUser = userSnap.data() as User;
           if (firestoreUser.status === 'inactive') {
             await fbSignOut(auth).catch(() => {});
@@ -233,6 +239,8 @@ class AuthService {
         }
       } catch (fbErr: any) {
         fbLoginErrorCode = fbErr?.code || '';
+      } finally {
+        manualRegistrationInProgress = false;
       }
     }
 
