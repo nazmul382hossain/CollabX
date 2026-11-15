@@ -1,11 +1,144 @@
 import { ExternalScholarlyResult } from '../types';
-import { ConsensusService } from './consensusService';
+import { storage } from './storage';
 
 export class ExternalSearchService {
   /**
-   * Performs external global scholarly search across OpenAlex, Europe PMC,
-   * Crossref, and universal academic repositories for any topic, thesis, or paper.
-   * Guarantees comprehensive, high-volume results (15-25+ works) for any keyword.
+   * Helper to validate that a string is a real, valid DOI format
+   * DOIs always begin with 10. followed by numbers and a slash (e.g. 10.1542/peds.110.1.184)
+   */
+  static cleanAndValidateDoi(rawDoi?: string | null): string | undefined {
+    if (!rawDoi || typeof rawDoi !== 'string') return undefined;
+    const clean = rawDoi.replace(/^https?:\/\/(?:dx\.)?doi\.org\//i, '').trim();
+    // Valid DOI pattern: starts with 10. followed by 4-9 digits, slash, and registrant suffix
+    const doiRegex = /^10\.\d{4,9}\/[-._;()/:A-Za-z0-9]+$/i;
+    // Reject fake / synthesized patterns
+    if (
+      clean.includes('TKDE.2024') ||
+      clean.includes('MIT.THESIS') ||
+      clean.includes('STANFORD.PHD') ||
+      clean.includes('CSUR.2025') ||
+      clean.includes('NAT.SR') ||
+      clean.includes('ETHZ.THESIS') ||
+      clean.includes('IEEE.2024.120')
+    ) {
+      return undefined;
+    }
+    return doiRegex.test(clean) ? clean : undefined;
+  }
+
+  /**
+   * Normalizes author lists from distinct academic sources (OpenAlex, Europe PMC, Crossref, arXiv, CollabX).
+   * Extracts real authors in their original returned order without inventing any names.
+   * If author data is missing, returns an empty array.
+   */
+  static normalizeAuthors(source: string, rawItem: any): string[] {
+    if (!rawItem) return [];
+    const src = (source || '').toLowerCase().trim();
+
+    // 1. OpenAlex: authorships[].author.display_name (or raw_author_name fallback)
+    if (src.includes('openalex')) {
+      const authorships = Array.isArray(rawItem.authorships) ? rawItem.authorships : [];
+      const names: string[] = [];
+      for (const a of authorships) {
+        const name = a?.author?.display_name || a?.raw_author_name;
+        if (typeof name === 'string' && name.trim()) {
+          names.push(name.trim());
+        }
+      }
+      return names;
+    }
+
+    // 2. Europe PMC: authorList.author[].fullName if present, or authorString
+    if (src.includes('europe') || src.includes('pmc')) {
+      if (rawItem.authorList?.author && Array.isArray(rawItem.authorList.author)) {
+        const names: string[] = [];
+        for (const a of rawItem.authorList.author) {
+          const fullName = a?.fullName || [a?.firstName, a?.lastName].filter(Boolean).join(' ').trim();
+          if (typeof fullName === 'string' && fullName.trim()) {
+            names.push(fullName.trim());
+          }
+        }
+        if (names.length > 0) return names;
+      }
+
+      if (typeof rawItem.authorString === 'string' && rawItem.authorString.trim()) {
+        return rawItem.authorString
+          .split(/[,;]/)
+          .map((s: string) => s.trim())
+          .filter(Boolean);
+      }
+      return [];
+    }
+
+    // 3. Crossref: author[] combining given + family. If only "name" exists (organization), use that.
+    if (src.includes('crossref')) {
+      const authors = Array.isArray(rawItem.author) ? rawItem.author : [];
+      const names: string[] = [];
+      for (const a of authors) {
+        const given = typeof a?.given === 'string' ? a.given.trim() : '';
+        const family = typeof a?.family === 'string' ? a.family.trim() : '';
+        const combined = [given, family].filter(Boolean).join(' ').trim();
+        const orgName = typeof a?.name === 'string' ? a.name.trim() : '';
+        const finalName = combined || orgName;
+        if (finalName) {
+          names.push(finalName);
+        }
+      }
+      return names;
+    }
+
+    // 4. arXiv: authors array
+    if (src.includes('arxiv')) {
+      if (Array.isArray(rawItem.authors)) {
+        return rawItem.authors
+          .map((s: any) => (typeof s === 'string' ? s.trim() : ''))
+          .filter(Boolean);
+      }
+      return [];
+    }
+
+    // 5. CollabX Repository
+    if (src.includes('collabx')) {
+      if (Array.isArray(rawItem.authors) && rawItem.authors.length > 0) {
+        return rawItem.authors
+          .map((s: any) => (typeof s === 'string' ? s.trim() : ''))
+          .filter(Boolean);
+      }
+      if (typeof rawItem.uploaderName === 'string' && rawItem.uploaderName.trim()) {
+        return [rawItem.uploaderName.trim()];
+      }
+      return [];
+    }
+
+    // Fallback if raw authors array provided
+    if (Array.isArray(rawItem.authors)) {
+      return rawItem.authors
+        .map((s: any) => (typeof s === 'string' ? s.trim() : ''))
+        .filter(Boolean);
+    }
+
+    return [];
+  }
+
+  /**
+   * Formats author array into display / citation string:
+   * Up to 3 authors, then "et al." (e.g. "Smith J, Rahman A, Chen L et al.").
+   * Returns empty string if no authors exist (never invents a name).
+   */
+  static formatAuthorsForCitation(authors?: string[]): string {
+    if (!authors || !Array.isArray(authors) || authors.length === 0) return '';
+    const valid = authors.map((a) => (typeof a === 'string' ? a.trim() : '')).filter(Boolean);
+    if (valid.length === 0) return '';
+    if (valid.length > 3) {
+      return `${valid.slice(0, 3).join(', ')} et al.`;
+    }
+    return valid.join(', ');
+  }
+
+  /**
+   * Performs authentic global scholarly search across real academic indices:
+   * OpenAlex, Europe PMC, Crossref, arXiv, and local CollabX Papers.
+   * NEVER synthesizes fake papers or fake DOIs.
    */
   static async searchScholarly(query: string): Promise<ExternalScholarlyResult[]> {
     if (!query || query.trim().length === 0) return [];
@@ -17,7 +150,43 @@ export class ExternalSearchService {
 
     const normalizeTitle = (t: string) => t.toLowerCase().replace(/[^a-z0-9]/g, '');
 
-    // 1. Fetch from OpenAlex (indexes 250M+ global works: journals, theses, preprints, conferences)
+    // 0. Match authentic university repository papers from CollabX
+    try {
+      const qLower = cleanQ.toLowerCase();
+      const localPapers = storage.getPapers().filter(p =>
+        p.title.toLowerCase().includes(qLower) ||
+        p.abstract.toLowerCase().includes(qLower) ||
+        (p.keywords && p.keywords.some(k => k.toLowerCase().includes(qLower))) ||
+        (p.authors && p.authors.some(a => a.toLowerCase().includes(qLower)))
+      );
+
+      for (const p of localPapers) {
+        const norm = normalizeTitle(p.title);
+        if (seenTitles.has(norm)) continue;
+        seenTitles.add(norm);
+
+        const validDoi = this.cleanAndValidateDoi(p.doi);
+        const authors = this.normalizeAuthors('collabx', p);
+        results.push({
+          id: `collabx-${p.id}`,
+          source: 'CollabX Repository' as any,
+          title: p.title,
+          authors,
+          year: p.year || new Date(p.createdAt).getFullYear(),
+          doi: validDoi,
+          citedByCount: p.views || 0,
+          abstract: p.abstract,
+          oaPdfUrl: p.pdfUrl,
+          url: p.pdfUrl || (validDoi ? `https://doi.org/${validDoi}` : `/papers/${p.id}`),
+          documentType: p.paperType === 'Thesis' ? 'Thesis' : p.paperType === 'Conference' ? 'Conference Proceeding' : p.paperType === 'Preprint' ? 'Preprint' : 'Research Paper',
+          venue: 'Port City International University / CollabX'
+        });
+      }
+    } catch {
+      // Ignore local storage error
+    }
+
+    // 1. Fetch from OpenAlex (official free index of 250M+ peer-reviewed works)
     const openAlexPromise = (async () => {
       try {
         const res = await fetch(`https://api.openalex.org/works?search=${encodedQ}&per-page=20&mailto=collabx@pciu.edu.bd`, {
@@ -35,7 +204,7 @@ export class ExternalSearchService {
               if (seenTitles.has(norm)) continue;
               seenTitles.add(norm);
 
-              // Reconstruct abstract from inverted index
+              // Reconstruct authentic abstract from inverted index if present
               let reconstructedAbstract = '';
               if (item.abstract_inverted_index) {
                 const words: [string, number][] = [];
@@ -45,17 +214,17 @@ export class ExternalSearchService {
                   }
                 }
                 words.sort((a, b) => a[1] - b[1]);
-                reconstructedAbstract = words.map(w => w[0]).join(' ').slice(0, 420) + (words.length > 50 ? '...' : '');
+                reconstructedAbstract = words.map(w => w[0]).join(' ').slice(0, 480) + (words.length > 60 ? '...' : '');
+              } else if (item.primary_location?.source?.display_name) {
+                reconstructedAbstract = `Published in ${item.primary_location.source.display_name}. Indexed in global scholarly bibliographic records.`;
               } else {
-                reconstructedAbstract = `Peer-reviewed scientific exploration investigating ${cleanQ} with empirical methodology, theoretical analysis, and experimental findings.`;
+                reconstructedAbstract = `Scholarly work indexed by OpenAlex with full verified author and publication metadata.`;
               }
 
-              const authors = (item.authorships || [])
-                .map((a: any) => a.author?.display_name)
-                .filter(Boolean)
-                .slice(0, 5);
+              // Extract authentic authors in original order returned
+              const authors = this.normalizeAuthors('openalex', item);
 
-              // Determine document type
+              // Determine real document type
               let docType: ExternalScholarlyResult['documentType'] = 'Research Paper';
               const rawType = (item.type || '').toLowerCase();
               const lowerTitle = title.toLowerCase();
@@ -72,31 +241,33 @@ export class ExternalSearchService {
 
               const venue = item.primary_location?.source?.display_name || 
                             item.host_venue?.display_name || 
-                            (docType === 'Thesis' ? 'University Graduate Thesis Repository' : 'Peer-Reviewed Scholarly Journal');
+                            (docType === 'Thesis' ? 'University Graduate Thesis Repository' : 'Academic Journal / Conference');
+
+              const validDoi = this.cleanAndValidateDoi(item.doi);
 
               results.push({
                 id: item.id || `openalex-${Math.random().toString(36).slice(2)}`,
                 source: 'OpenAlex',
                 title,
-                authors: authors.length > 0 ? authors : ['Academic Research Consortium'],
+                authors,
                 year: item.publication_year || 2024,
-                doi: item.doi ? item.doi.replace('https://doi.org/', '') : undefined,
+                doi: validDoi,
                 citedByCount: typeof item.cited_by_count === 'number' ? item.cited_by_count : 0,
                 abstract: reconstructedAbstract,
                 oaPdfUrl: item.open_access?.oa_url || item.primary_location?.pdf_url || undefined,
-                url: item.doi || item.id || `https://openalex.org/works/${item.id}`,
+                url: validDoi ? `https://doi.org/${validDoi}` : (item.primary_location?.landing_page_url || item.id || `https://openalex.org`),
                 documentType: docType,
                 venue
               });
             }
           }
         }
-      } catch (err) {
-        console.warn('[ExternalSearch] OpenAlex query non-fatal error:', err);
+      } catch {
+        // Silently continue with other providers
       }
     })();
 
-    // 2. Fetch from Europe PMC (biomedical, medical, biology, biochemistry, clinical, chemistry & physics)
+    // 2. Fetch from Europe PMC (free biomedical, medical, computer science in health, biology, and chemistry index)
     const europePmcPromise = (async () => {
       try {
         const res = await fetch(`https://www.ebi.ac.uk/europepmc/webservices/rest/search?query=${encodedQ}&format=json&pageSize=15&resultType=core`, {
@@ -114,12 +285,12 @@ export class ExternalSearchService {
             if (seenTitles.has(norm)) continue;
             seenTitles.add(norm);
 
-            const authors = item.authorString ? item.authorString.split(',').map((s: string) => s.trim()).slice(0, 4) : ['Research Group'];
+            const authors = this.normalizeAuthors('europe pmc', item);
             const year = parseInt(item.pubYear) || 2024;
             const rawAbstract = (item.abstractText || '').replace(/<[^>]+>/g, '').trim();
             const abstract = rawAbstract 
-              ? rawAbstract.slice(0, 420) + (rawAbstract.length > 420 ? '...' : '') 
-              : `Comprehensive scientific investigation examining ${cleanQ} with validated empirical datasets, clinical trials, and quantitative outcome measurements.`;
+              ? rawAbstract.slice(0, 450) + (rawAbstract.length > 450 ? '...' : '') 
+              : `Scientific study published in ${item.journalTitle || 'Europe PMC Indexed Literature'}. Verified metadata available.`;
 
             let docType: ExternalScholarlyResult['documentType'] = 'Research Paper';
             const lowerT = title.toLowerCase();
@@ -135,28 +306,30 @@ export class ExternalSearchService {
               ? `https://europepmc.org/articles/${item.pmcid}?pdf=render` 
               : undefined;
 
+            const validDoi = this.cleanAndValidateDoi(item.doi);
+
             results.push({
               id: `epmc-${item.id || Math.random().toString(36).slice(2)}`,
               source: 'Europe PMC',
               title,
               authors,
               year,
-              doi: item.doi,
+              doi: validDoi,
               citedByCount: item.citedByCount || 0,
               abstract,
               oaPdfUrl: pdfUrl,
-              url: item.doi ? `https://doi.org/${item.doi}` : `https://europepmc.org/article/${item.source}/${item.id}`,
+              url: validDoi ? `https://doi.org/${validDoi}` : `https://europepmc.org/article/${item.source || 'MED'}/${item.id}`,
               documentType: docType,
               venue: item.journalTitle || 'European Academic Literature Archive'
             });
           }
         }
-      } catch (err) {
-        console.warn('[ExternalSearch] Europe PMC query non-fatal error:', err);
+      } catch {
+        // Silently continue with other providers
       }
     })();
 
-    // 3. Fetch from Crossref API (official international DOI registry for 140M+ works)
+    // 3. Fetch from Crossref (official international DOI foundation registry)
     const crossrefPromise = (async () => {
       try {
         const res = await fetch(`https://api.crossref.org/works?query=${encodedQ}&rows=12&mailto=collabx@pciu.edu.bd`, {
@@ -174,10 +347,10 @@ export class ExternalSearchService {
             if (seenTitles.has(norm)) continue;
             seenTitles.add(norm);
 
-            const authors = (item.author || []).map((a: any) => `${a.given || ''} ${a.family || ''}`.trim()).filter(Boolean).slice(0, 4);
+            const authors = this.normalizeAuthors('crossref', item);
             const year = item.published?.['date-parts']?.[0]?.[0] || 2024;
             const venue = item['container-title']?.[0] || item.publisher || 'Peer-Reviewed Academic Press';
-            const doi = item.DOI;
+            const validDoi = this.cleanAndValidateDoi(item.DOI);
             const citedCount = item['is-referenced-by-count'] || 0;
 
             let docType: ExternalScholarlyResult['documentType'] = 'Research Paper';
@@ -191,225 +364,156 @@ export class ExternalSearchService {
               docType = 'Preprint';
             }
 
+            // Authentic abstract or bibliographic notice
+            const abstract = item.abstract 
+              ? item.abstract.replace(/<[^>]+>/g, '').slice(0, 450)
+              : `Peer-reviewed scientific publication indexed by Crossref. Published by ${venue}. Registered DOI: ${validDoi || 'Included'}.`;
+
             results.push({
-              id: `crossref-${item.DOI || Math.random().toString(36).slice(2)}`,
+              id: `crossref-${validDoi || Math.random().toString(36).slice(2)}`,
               source: 'Crossref',
               title: rawTitle,
-              authors: authors.length > 0 ? authors : ['International Research Team'],
+              authors,
               year,
-              doi,
+              doi: validDoi,
               citedByCount: citedCount,
-              abstract: `High-impact peer-reviewed scientific paper indexed by Crossref, addressing ${cleanQ} within ${venue}. Full bibliographic references and verified metadata included.`,
-              oaPdfUrl: item.link?.[0]?.URL || (doi ? `https://doi.org/${doi}` : undefined),
-              url: doi ? `https://doi.org/${doi}` : 'https://crossref.org',
+              abstract,
+              oaPdfUrl: item.link?.[0]?.URL || (validDoi ? `https://doi.org/${validDoi}` : undefined),
+              url: validDoi ? `https://doi.org/${validDoi}` : 'https://crossref.org',
               documentType: docType,
               venue
             });
           }
         }
-      } catch (err) {
-        console.warn('[ExternalSearch] Crossref query non-fatal error:', err);
+      } catch {
+        // Silently continue with other providers
       }
     })();
 
-    await Promise.allSettled([openAlexPromise, europePmcPromise, crossrefPromise]);
+    // 4. Fetch from arXiv API (official open-access preprints and research papers)
+    const arxivPromise = (async () => {
+      try {
+        const res = await fetch(`https://export.arxiv.org/api/query?search_query=all:${encodedQ}&start=0&max_results=8`, {
+          signal: AbortSignal.timeout(6000)
+        });
 
-    // If external live APIs returned a healthy batch of results (at least 8), supplement with theses if needed and return
-    const hasTheses = results.some(r => r.documentType === 'Thesis' || r.documentType === 'Dissertation');
-    
-    // Always guarantee diverse thesis papers and comprehensive papers for the user's specific query
-    const dynamicSynthesized = this.synthesizeTopicScholarly(cleanQ, seenTitles);
-    
-    let combined = [...results];
-    if (results.length < 15 || !hasTheses) {
-      combined = [...combined, ...dynamicSynthesized];
-    }
+        if (res.ok) {
+          const text = await res.text();
+          // Parse XML entries using regex
+          const entryMatches = text.match(/<entry>[\s\S]*?<\/entry>/g) || [];
+          for (const entry of entryMatches) {
+            const titleMatch = entry.match(/<title>([\s\S]*?)<\/title>/);
+            const title = (titleMatch ? titleMatch[1].replace(/\s+/g, ' ').trim() : '');
+            if (!title) continue;
+            const norm = normalizeTitle(title);
+            if (seenTitles.has(norm)) continue;
+            seenTitles.add(norm);
 
-    const sorted = combined.sort((a, b) => (b.citedByCount || 0) - (a.citedByCount || 0));
-    return ConsensusService.augmentPapersWithConsensus(cleanQ, sorted);
-  }
+            const summaryMatch = entry.match(/<summary>([\s\S]*?)<\/summary>/);
+            const abstract = summaryMatch ? summaryMatch[1].replace(/\s+/g, ' ').trim().slice(0, 480) + '...' : 'arXiv preprint manuscript.';
 
-  /**
-   * Intelligently synthesizes comprehensive research papers, master's theses,
-   * doctoral dissertations, and conference proceedings tailored to ANY user search topic.
-   */
-  private static synthesizeTopicScholarly(query: string, seenTitles: Set<string>): ExternalScholarlyResult[] {
-    const topicFormatted = query
-      .split(' ')
-      .map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
-      .join(' ');
+            const authorMatches = [...entry.matchAll(/<author>[\s\S]*?<name>([\s\S]*?)<\/name>[\s\S]*?<\/author>/g)];
+            const rawArxivAuthors = authorMatches.map(m => m[1].trim()).filter(Boolean);
+            const authors = this.normalizeAuthors('arxiv', { authors: rawArxivAuthors });
 
-    // Template generators for diverse academic formats
-    const templates: {
-      title: string;
-      docType: ExternalScholarlyResult['documentType'];
-      venue: string;
-      authors: string[];
-      year: number;
-      citedByCount: number;
-      abstract: string;
-      source: ExternalScholarlyResult['source'];
-      doiSuffix: string;
-      pdfPath: string;
-    }[] = [
-      {
-        title: `A Novel Empirical Framework for ${topicFormatted}: Architecture, Experimental Evaluation, and Scalability`,
-        docType: 'Research Paper',
-        venue: 'IEEE Transactions on Knowledge and Data Engineering',
-        authors: ['Dr. Julian Vance', 'Elena Rostova', 'Mohammad Tariq', 'Prof. Aris Thorne'],
-        year: 2024,
-        citedByCount: 428,
-        abstract: `This study introduces a robust empirical architecture for ${topicFormatted}. Through rigorous bench-marking across multi-institutional benchmark datasets, our proposed method demonstrates a 28.4% improvement in efficiency and computational throughput compared to baseline standards, establishing new reproducibility benchmarks.`,
-        source: 'Crossref',
-        doiSuffix: 'TKDE.2024.3189201',
-        pdfPath: 'https://arxiv.org/pdf/2401.03482'
-      },
-      {
-        title: `Master's Thesis: Algorithmic Optimization and Practical Implementation of ${topicFormatted} Systems`,
-        docType: 'Thesis',
-        venue: 'MIT School of Engineering / Academic Thesis Archive',
-        authors: ['Nayeemul Hassan', 'Supervised by Prof. K. R. Henderson'],
-        year: 2024,
-        citedByCount: 114,
-        abstract: `Submitted in partial fulfillment of the requirements for the degree of Master of Science. This dissertation investigates mathematical modeling, practical constraints, and algorithmic optimizations in deploying ${topicFormatted}. Includes full experimental code repositories, reproducible schemas, and qualitative ablation studies.`,
-        source: 'Global Thesis Repository',
-        doiSuffix: 'MIT.THESIS.2024.0812',
-        pdfPath: 'https://arxiv.org/pdf/2311.12908'
-      },
-      {
-        title: `PhD Dissertation: Theoretical Foundations, Security Verification, and Scalable Paradigms in ${topicFormatted}`,
-        docType: 'Dissertation',
-        venue: 'Stanford University Graduate Division & Research Library',
-        authors: ['Dr. Sarah Lin-Schumacher', 'Advisory Committee Chair: Prof. David M. Walsh'],
-        year: 2023,
-        citedByCount: 680,
-        abstract: `A doctoral dissertation presenting unified theoretical proofs and comprehensive experimental evaluations of ${topicFormatted}. We formulate fundamental bound theorems, present extensive statistical significance testing, and outline prospective five-year trajectories for high-impact translational research.`,
-        source: 'Global Thesis Repository',
-        doiSuffix: 'STANFORD.PHD.2023.7741',
-        pdfPath: 'https://arxiv.org/pdf/2309.08120'
-      },
-      {
-        title: `Comprehensive Systematic Literature Review and Taxonomy of ${topicFormatted} (2018–2026)`,
-        docType: 'Review Article',
-        venue: 'ACM Computing Surveys (CSUR)',
-        authors: ['Marcus Aurelius Boyd', 'Priya Ramanujan', 'Christoph Weber', 'Siddharth Roy'],
-        year: 2025,
-        citedByCount: 1420,
-        abstract: `We conduct a systematic mapping study analyzing over 450 peer-reviewed articles addressing ${topicFormatted}. We categorize contemporary approaches across taxonomy dimensions, identify acute open challenges in reproducibility and security, and delineate high-potential trajectories for interdisciplinary scholars.`,
-        source: 'OpenAlex',
-        doiSuffix: 'CSUR.2025.10982',
-        pdfPath: 'https://arxiv.org/pdf/2402.11890'
-      },
-      {
-        title: `International Conference on Computational Advances: Real-Time Benchmarking of ${topicFormatted} in Production`,
-        docType: 'Conference Proceeding',
-        venue: 'Proceedings of the 42nd International Conference on Machine Learning & Systems (ICMLS 2024)',
-        authors: ['Tariq Al-Mansoor', 'Kavita Chawla', 'Henrik Lindqvist'],
-        year: 2024,
-        citedByCount: 236,
-        abstract: `Presented at the annual proceedings. We demonstrate real-world edge deployment benchmarks of ${topicFormatted}, validating energy conservation, distributed resource allocation, and zero-downtime integration protocols under adversarial noise environments.`,
-        source: 'Crossref',
-        doiSuffix: 'ICMLS.2024.6401',
-        pdfPath: 'https://arxiv.org/pdf/2403.04512'
-      },
-      {
-        title: `Preprint: Next-Generation Protocols in ${topicFormatted} via Self-Supervised and Transfer Protocols`,
-        docType: 'Preprint',
-        venue: 'arXiv Computer Science & Scientific Computing',
-        authors: ['Arthur Pendelton', 'Prof. Mei-Ling Zhou', 'Gillian Roberts'],
-        year: 2025,
-        citedByCount: 120,
-        abstract: `Preprint manuscript undergoing peer review. We propose self-supervised representation protocols tailored specifically for ${topicFormatted}, reporting state-of-the-art results across standard public corpora with minimal manual parameter tuning.`,
-        source: 'arXiv',
-        doiSuffix: 'arXiv.2501.09214',
-        pdfPath: 'https://arxiv.org/pdf/2501.09214'
-      },
-      {
-        title: `Experimental Clinical & Laboratory Evaluation of ${topicFormatted}: Multi-Center Study and Outcomes`,
-        docType: 'Research Paper',
-        venue: 'The Lancet Digital Health / Nature Scientific Reports',
-        authors: ['Dr. Fiona Gallagher', 'Dr. Chen Wei', 'Prof. Robert Sterling'],
-        year: 2024,
-        citedByCount: 890,
-        abstract: `A multi-center collaborative trial investigating diagnostic and empirical implications of ${topicFormatted}. Cohort analysis across 3,400 experimental subjects reveals statistically verified efficacy (p < 0.001) and substantial reduction in operational variability.`,
-        source: 'Europe PMC',
-        doiSuffix: 'NAT.SR.2024.4419',
-        pdfPath: 'https://arxiv.org/pdf/2308.10214'
-      },
-      {
-        title: `Master of Science Thesis: Hardware Acceleration and Distributed Pipeline Architecture for ${topicFormatted}`,
-        docType: 'Thesis',
-        venue: 'ETH Zurich Graduate School / Academic Dissertations',
-        authors: ['Luca Bernardi', 'Advisor: Prof. Markus Gross'],
-        year: 2024,
-        citedByCount: 165,
-        abstract: `Master's Thesis presented to ETH Zurich. Explores hardware acceleration strategies, low-latency firmware implementations, and micro-architectural parallelization tailored to ${topicFormatted}. Includes synthesizable Verilog/SystemC testbenches and latency profiling.`,
-        source: 'Global Thesis Repository',
-        doiSuffix: 'ETHZ.THESIS.2024.1902',
-        pdfPath: 'https://arxiv.org/pdf/2307.05192'
+            const publishedMatch = entry.match(/<published>(\d{4})/);
+            const year = publishedMatch ? parseInt(publishedMatch[1]) : 2024;
+
+            const idMatch = entry.match(/<id>([\s\S]*?)<\/id>/);
+            const rawId = idMatch ? idMatch[1].trim() : '';
+
+            const pdfMatch = entry.match(/<link[^>]*title="pdf"[^>]*href="([^"]+)"/);
+            const pdfUrl = pdfMatch ? pdfMatch[1] : (rawId ? rawId.replace('/abs/', '/pdf/') : undefined);
+
+            const doiMatch = entry.match(/<arxiv:doi>([\s\S]*?)<\/arxiv:doi>/);
+            const validDoi = this.cleanAndValidateDoi(doiMatch ? doiMatch[1].trim() : undefined);
+
+            results.push({
+              id: `arxiv-${rawId ? rawId.split('/').pop() : Math.random().toString(36).slice(2)}`,
+              source: 'arXiv',
+              title,
+              authors,
+              year,
+              doi: validDoi,
+              citedByCount: 0,
+              abstract,
+              oaPdfUrl: pdfUrl,
+              url: rawId || `https://arxiv.org`,
+              documentType: 'Preprint',
+              venue: 'arXiv Open-Access Research Archive'
+            });
+          }
+        }
+      } catch {
+        // Silently continue with other providers
       }
-    ];
+    })();
 
-    const results: ExternalScholarlyResult[] = [];
+    await Promise.allSettled([openAlexPromise, europePmcPromise, crossrefPromise, arxivPromise]);
 
-    for (const t of templates) {
-      const norm = t.title.toLowerCase().replace(/[^a-z0-9]/g, '');
-      if (seenTitles.has(norm)) continue;
-      seenTitles.add(norm);
-
-      results.push({
-        id: `synth-${Math.random().toString(36).slice(2, 9)}`,
-        source: t.source,
-        title: t.title,
-        authors: t.authors,
-        year: t.year,
-        doi: `10.1145/${t.doiSuffix}`,
-        citedByCount: t.citedByCount,
-        abstract: t.abstract,
-        oaPdfUrl: t.pdfPath,
-        url: `https://doi.org/10.1145/${t.doiSuffix}`,
-        documentType: t.docType,
-        venue: t.venue
-      });
-    }
-
-    return results;
+    // Return purely authentic, verified results sorted by citation count and year
+    return results.sort((a, b) => {
+      if ((b.citedByCount || 0) !== (a.citedByCount || 0)) {
+        return (b.citedByCount || 0) - (a.citedByCount || 0);
+      }
+      return (b.year || 0) - (a.year || 0);
+    });
   }
 
   /**
    * Generates formatted citations for research papers in multiple standard formats.
+   * Uses mapped author string (up to 3 authors, then "et al.").
+   * Never invents fake authors or placeholders when authors are absent.
    */
   static generateCitation(paper: { 
     title: string; 
-    authors: string[]; 
+    authors?: string[]; 
     year: number; 
-    doi?: string;
-    venue?: string;
-    documentType?: string;
+    doi?: string; 
+    venue?: string; 
+    documentType?: string; 
   }): { 
     apa: string; 
     ieee: string; 
     harvard: string; 
     bibtex: string; 
-    mla: string;
+    mla: string; 
   } {
-    const authorsStr = (paper.authors || []).join(', ') || 'Anonymous Scholar';
-    const firstAuthor = paper.authors?.[0] || 'Scholar';
-    const firstAuthorLast = firstAuthor.split(' ').pop() || 'Scholar';
-    const doiPart = paper.doi ? ` https://doi.org/${paper.doi}` : '';
+    const authorsStr = this.formatAuthorsForCitation(paper.authors);
+    const validDoi = this.cleanAndValidateDoi(paper.doi);
+    const doiPart = validDoi ? ` https://doi.org/${validDoi}` : '';
     const venue = paper.venue || 'Scholarly Academic Repository';
+    const yearStr = paper.year ? `(${paper.year})` : '';
 
-    const apa = `${authorsStr} (${paper.year}). ${paper.title}. ${venue}.${doiPart}`;
-    const ieee = `${authorsStr}, "${paper.title}," in ${venue}, ${paper.year}.${doiPart}`;
-    const harvard = `${authorsStr}, ${paper.year}. ${paper.title}. ${venue}.${doiPart}`;
-    const mla = `${authorsStr}. "${paper.title}." ${venue}, ${paper.year}.${doiPart}`;
+    const validAuthors = (paper.authors || []).map((a) => (typeof a === 'string' ? a.trim() : '')).filter(Boolean);
+    const firstAuthor = validAuthors[0] || '';
+    const firstAuthorLast = firstAuthor ? (firstAuthor.split(' ').pop() || 'work') : 'work';
 
-    const bibtex = `@article{${firstAuthorLast.toLowerCase()}${paper.year},
-  title={${paper.title}},
-  author={${(paper.authors || []).join(' and ')}},
+    let apa: string;
+    let ieee: string;
+    let harvard: string;
+    let mla: string;
+
+    if (authorsStr) {
+      apa = `${authorsStr} ${yearStr}. ${paper.title}. ${venue}.${doiPart}`.trim();
+      ieee = `${authorsStr}, "${paper.title}," in ${venue}, ${paper.year}.${doiPart}`.trim();
+      harvard = `${authorsStr}, ${paper.year}. ${paper.title}. ${venue}.${doiPart}`.trim();
+      mla = `${authorsStr}. "${paper.title}." ${venue}, ${paper.year}.${doiPart}`.trim();
+    } else {
+      apa = `${paper.title}. ${yearStr}. ${venue}.${doiPart}`.trim();
+      ieee = `"${paper.title}," in ${venue}, ${paper.year}.${doiPart}`.trim();
+      harvard = `${paper.title}, ${paper.year}. ${venue}.${doiPart}`.trim();
+      mla = `"${paper.title}." ${venue}, ${paper.year}.${doiPart}`.trim();
+    }
+
+    const bibtexAuthorLine = validAuthors.length > 0 
+      ? `\n  author={${validAuthors.join(' and ')}},` 
+      : '';
+
+    const bibtex = `@article{${firstAuthorLast.toLowerCase().replace(/[^a-z0-9]/g, '')}${paper.year || 2024},
+  title={${paper.title}},${bibtexAuthorLine}
   journal={${venue}},
-  year={${paper.year}},
-  doi={${paper.doi || 'none'}}
+  year={${paper.year || 2024}}${validDoi ? `,\n  doi={${validDoi}}` : ''}
 }`;
 
     return { apa, ieee, harvard, bibtex, mla };

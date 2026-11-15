@@ -20,8 +20,12 @@ import {
 } from 'lucide-react';
 import { storage } from '../../services/storage';
 import { ExternalSearchService } from '../../services/externalSearchService';
-import { Project, Paper, ExternalScholarlyResult, PublicProfile } from '../../types';
+import { Project, Paper, ExternalScholarlyResult, PublicProfile, PaperStats } from '../../types';
 import { publicProfileService } from '../../services/publicProfileService';
+import { AuthorDisplay } from '../common/AuthorDisplay';
+import { PaperRating } from '../common/PaperRating';
+import { RatingService, getPaperId } from '../../services/ratingService';
+import { useAuth } from '../../contexts/AuthContext';
 
 interface SearchModalProps {
   isOpen: boolean;
@@ -36,11 +40,13 @@ export const SearchModal: React.FC<SearchModalProps> = ({
   onNavigate,
   initialQuery = ''
 }) => {
+  const { currentUser } = useAuth();
   const [query, setQuery] = useState(initialQuery);
   const [activeTab, setActiveTab] = useState<'all' | 'scholarly' | 'theses' | 'papers' | 'projects' | 'people'>('all');
   const [scholarlyFilter, setScholarlyFilter] = useState<'all' | 'thesis' | 'paper' | 'preprint'>('all');
-  const [studyDesignFilter, setStudyDesignFilter] = useState<string>('all');
+  const [sortBy, setSortBy] = useState<'relevance' | 'highest_rated' | 'most_cited'>('relevance');
   const [scholarlyResults, setScholarlyResults] = useState<ExternalScholarlyResult[]>([]);
+  const [paperStatsMap, setPaperStatsMap] = useState<Record<string, PaperStats>>({});
   const [loadingScholarly, setLoadingScholarly] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -115,7 +121,7 @@ export const SearchModal: React.FC<SearchModalProps> = ({
     u.department.toLowerCase().includes(qLower)
   ) : publicProfileService.getPublicProfiles().slice(0, 3);
 
-  // Filtered scholarly results by document type & study design
+  // Filtered scholarly results by document type
   const filteredScholarly = scholarlyResults.filter(s => {
     // Document Type Filter
     if (scholarlyFilter === 'thesis') {
@@ -128,22 +134,49 @@ export const SearchModal: React.FC<SearchModalProps> = ({
       if (s.documentType !== 'Preprint' && s.source !== 'arXiv') return false;
     }
 
-    // Study Design Filter (Consensus)
-    if (studyDesignFilter !== 'all') {
-      if (studyDesignFilter === 'meta') {
-        const isMeta = s.studyDesign?.includes('Meta') || s.studyDesign?.includes('Systematic');
-        if (!isMeta) return false;
-      } else if (studyDesignFilter === 'rct') {
-        const isRct = s.studyDesign?.includes('RCT') || s.studyDesign?.includes('Trial');
-        if (!isRct) return false;
-      } else if (studyDesignFilter === 'theses') {
-        const isTh = s.documentType === 'Thesis' || s.documentType === 'Dissertation' || s.studyDesign?.includes('Dissertation');
-        if (!isTh) return false;
-      }
-    }
-
     return true;
   });
+
+  // Batched retrieval of community ratings for all visible scholarly works & repository papers
+  useEffect(() => {
+    const ids: string[] = [];
+    scholarlyResults.forEach(s => ids.push(getPaperId(s)));
+    localPapers.forEach(p => ids.push(getPaperId(p)));
+
+    if (ids.length > 0) {
+      RatingService.batchGetPaperStats(ids).then(stats => {
+        setPaperStatsMap(prev => ({ ...prev, ...stats }));
+      });
+    }
+  }, [scholarlyResults, localPapers]);
+
+  // Sort scholarly results according to selected sortBy
+  const sortedScholarly = useMemo(() => {
+    return [...filteredScholarly].sort((a, b) => {
+      if (sortBy === 'highest_rated') {
+        const aId = getPaperId(a);
+        const bId = getPaperId(b);
+        const aStats = paperStatsMap[aId];
+        const bStats = paperStatsMap[bId];
+        const aHas = (aStats?.ratingCount || 0) > 0;
+        const bHas = (bStats?.ratingCount || 0) > 0;
+        // Papers with no ratings go last
+        if (aHas && !bHas) return -1;
+        if (!aHas && bHas) return 1;
+        if (aHas && bHas) {
+          if (bStats.average !== aStats.average) {
+            return bStats.average - aStats.average;
+          }
+          return bStats.ratingCount - aStats.ratingCount;
+        }
+        return 0;
+      }
+      if (sortBy === 'most_cited') {
+        return (b.citedByCount || 0) - (a.citedByCount || 0);
+      }
+      return 0; // relevance preserves API order
+    });
+  }, [filteredScholarly, sortBy, paperStatsMap]);
 
   const thesesCount = scholarlyResults.filter(s => 
     s.documentType === 'Thesis' || s.documentType === 'Dissertation' || s.title.toLowerCase().includes('thesis') || s.title.toLowerCase().includes('dissertation')
@@ -206,7 +239,7 @@ export const SearchModal: React.FC<SearchModalProps> = ({
         {/* Global Filter Navigation Tabs */}
         <div className="flex items-center gap-1.5 px-4 sm:px-6 py-2.5 bg-[#F8FAFC] border-b border-[#E3EAF3] overflow-x-auto text-xs font-bold scrollbar-none">
           <button
-            onClick={() => { setActiveTab('all'); setScholarlyFilter('all'); setStudyDesignFilter('all'); }}
+            onClick={() => { setActiveTab('all'); setScholarlyFilter('all'); }}
             className={`px-3.5 py-1.5 rounded-xl whitespace-nowrap cursor-pointer transition-all ${
               activeTab === 'all' 
                 ? 'bg-[#0B6BE6] text-white shadow-xs' 
@@ -217,7 +250,7 @@ export const SearchModal: React.FC<SearchModalProps> = ({
           </button>
 
           <button
-            onClick={() => { setActiveTab('scholarly'); setScholarlyFilter('all'); setStudyDesignFilter('all'); }}
+            onClick={() => { setActiveTab('scholarly'); setScholarlyFilter('all'); }}
             className={`px-3.5 py-1.5 rounded-xl whitespace-nowrap cursor-pointer transition-all flex items-center gap-1.5 ${
               activeTab === 'scholarly' 
                 ? 'bg-[#0B6BE6] text-white shadow-xs' 
@@ -229,7 +262,7 @@ export const SearchModal: React.FC<SearchModalProps> = ({
           </button>
 
           <button
-            onClick={() => { setActiveTab('theses'); setScholarlyFilter('thesis'); setStudyDesignFilter('all'); }}
+            onClick={() => { setActiveTab('theses'); setScholarlyFilter('thesis'); }}
             className={`px-3.5 py-1.5 rounded-xl whitespace-nowrap cursor-pointer transition-all flex items-center gap-1.5 ${
               activeTab === 'theses' 
                 ? 'bg-[#0B6BE6] text-white shadow-xs' 
@@ -325,75 +358,114 @@ export const SearchModal: React.FC<SearchModalProps> = ({
           {/* SECTION: Global Research Papers & Theses */}
           {(activeTab === 'all' || activeTab === 'scholarly' || activeTab === 'theses') && (
             <div className="space-y-3">
-              <div className="flex items-center justify-between">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
                 <h3 className="font-extrabold text-sm sm:text-base text-[#0B2A55] flex items-center gap-2">
                   <Sparkles className="w-4 h-4 text-[#FFC83D]" />
-                  Global Academic Works ({filteredScholarly.length})
+                  Global Academic Works ({sortedScholarly.length})
                 </h3>
-                {query.trim() && (
-                  <div className="flex items-center gap-1.5 text-xs">
-                    <button
-                      onClick={() => setScholarlyFilter('all')}
-                      className={`px-2.5 py-1 rounded-lg text-[11px] font-bold cursor-pointer transition-colors ${
-                        scholarlyFilter === 'all' ? 'bg-[#0B2A55] text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                      }`}
+                <div className="flex flex-wrap items-center gap-2">
+                  {/* Sort By Dropdown */}
+                  <div className="flex items-center gap-1.5 text-xs bg-[#F5F8FC] border border-[#E3EAF3] rounded-xl px-2.5 py-1">
+                    <span className="text-gray-500 font-semibold text-[11px]">Sort by:</span>
+                    <select
+                      value={sortBy}
+                      onChange={(e) => setSortBy(e.target.value as any)}
+                      className="bg-transparent font-bold text-[#0B2A55] text-xs focus:outline-hidden cursor-pointer"
                     >
-                      All
-                    </button>
-                    <button
-                      onClick={() => setScholarlyFilter('thesis')}
-                      className={`px-2.5 py-1 rounded-lg text-[11px] font-bold cursor-pointer transition-colors ${
-                        scholarlyFilter === 'thesis' ? 'bg-[#0B2A55] text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                      }`}
-                    >
-                      Theses & Dissertations
-                    </button>
-                    <button
-                      onClick={() => setScholarlyFilter('paper')}
-                      className={`px-2.5 py-1 rounded-lg text-[11px] font-bold cursor-pointer transition-colors ${
-                        scholarlyFilter === 'paper' ? 'bg-[#0B2A55] text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                      }`}
-                    >
-                      Journal Papers
-                    </button>
+                      <option value="relevance">Relevance</option>
+                      <option value="highest_rated">Highest rated</option>
+                      <option value="most_cited">Most cited</option>
+                    </select>
                   </div>
-                )}
+
+                  {query.trim() && (
+                    <div className="flex items-center gap-1 text-xs">
+                      <button
+                        onClick={() => setScholarlyFilter('all')}
+                        className={`px-2.5 py-1 rounded-lg text-[11px] font-bold cursor-pointer transition-colors ${
+                          scholarlyFilter === 'all' ? 'bg-[#0B2A55] text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                        }`}
+                      >
+                        All
+                      </button>
+                      <button
+                        onClick={() => setScholarlyFilter('thesis')}
+                        className={`px-2.5 py-1 rounded-lg text-[11px] font-bold cursor-pointer transition-colors ${
+                          scholarlyFilter === 'thesis' ? 'bg-[#0B2A55] text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                        }`}
+                      >
+                        Theses & Dissertations
+                      </button>
+                      <button
+                        onClick={() => setScholarlyFilter('paper')}
+                        className={`px-2.5 py-1 rounded-lg text-[11px] font-bold cursor-pointer transition-colors ${
+                          scholarlyFilter === 'paper' ? 'bg-[#0B2A55] text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                        }`}
+                      >
+                        Journal Papers
+                      </button>
+                    </div>
+                  )}
+                </div>
               </div>
 
-              {filteredScholarly.length > 0 ? (
+              {sortedScholarly.length > 0 ? (
                 <div className="space-y-3.5">
-                  {filteredScholarly.map((s) => (
+                  {sortedScholarly.map((s) => (
                     <div 
                       key={s.id} 
                       className="p-4 sm:p-5 rounded-2xl border border-[#E3EAF3] bg-white hover:border-[#1565E8] transition-all space-y-3 shadow-2xs group hover:shadow-md"
                     >
                       <div className="space-y-2">
-                        {/* Consensus Rigor, Design & Stance Badges */}
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className="text-[11px] font-bold text-gray-500 bg-gray-100 px-2.5 py-0.5 rounded-md">
-                            {s.source}
-                          </span>
-                          <span className="text-xs text-gray-400 font-semibold">{s.year}</span>
-                          
-                          {s.citedByCount ? (
-                            <span className="text-[11px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-md">
-                              ★ {s.citedByCount.toLocaleString()} Citations
+                        {/* Top Badges & Community Rating */}
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="text-[11px] font-bold text-gray-600 bg-gray-100 px-2.5 py-0.5 rounded-md">
+                              {s.source}
                             </span>
-                          ) : null}
+                            <span className="text-xs text-gray-400 font-semibold">{s.year}</span>
+                            
+                            {s.documentType && (
+                              <span className="text-[10px] font-bold text-[#0B6BE6] bg-[#EEF4FF] px-2 py-0.5 rounded-md border border-[#BFDBFE]">
+                                {s.documentType}
+                              </span>
+                            )}
 
-                          {/* Study Design Badge */}
-                          {s.studyDesign && (
-                            <span className="px-2 py-0.5 rounded-md text-[10px] font-black uppercase tracking-wide bg-[#F3E8FF] text-[#7E22CE] border border-[#E9D5FF]">
-                              {s.studyDesign}
-                            </span>
-                          )}
+                            {s.citedByCount ? (
+                              <span className="text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200">
+                                ★ {s.citedByCount.toLocaleString()} Citations
+                              </span>
+                            ) : null}
 
-                          {/* Sample Size Badge */}
-                          {s.sampleSize && (
-                            <span className="px-2 py-0.5 rounded-md text-[10px] font-bold text-gray-600 bg-gray-100 border border-gray-200">
-                              {s.sampleSize}
-                            </span>
-                          )}
+                            {/* Authentic Registered DOI Badge */}
+                            {s.doi && (
+                              <a
+                                href={`https://doi.org/${s.doi}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                onClick={(e) => e.stopPropagation()}
+                                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-mono font-bold text-[#1565E8] bg-[#EEF4FF] hover:bg-[#DBEAFE] border border-[#BFDBFE] transition-colors"
+                                title={`Official registered DOI: ${s.doi}`}
+                              >
+                                <span>DOI: {s.doi}</span>
+                                <ExternalLink className="w-2.5 h-2.5 shrink-0" />
+                              </a>
+                            )}
+                          </div>
+
+                          {/* Top-Right CollabX Community Rating */}
+                          <PaperRating
+                            paper={s}
+                            stats={paperStatsMap[getPaperId(s)]}
+                            currentUser={currentUser}
+                            onAuthRequired={() => {
+                              onClose();
+                              onNavigate('/login');
+                            }}
+                            onRated={(newStats) => {
+                              setPaperStatsMap(prev => ({ ...prev, [newStats.paperId]: newStats }));
+                            }}
+                          />
                         </div>
 
                         {/* Paper Title */}
@@ -417,9 +489,7 @@ export const SearchModal: React.FC<SearchModalProps> = ({
                         </p>
 
                         {/* Authors */}
-                        <p className="text-[11px] text-gray-400">
-                          Authors: <span className="text-gray-600 font-medium">{s.authors.join(', ')}</span>
-                        </p>
+                        <AuthorDisplay authors={s.authors} />
                       </div>
 
                       {/* Footer Actions */}
@@ -487,21 +557,35 @@ export const SearchModal: React.FC<SearchModalProps> = ({
                   <div
                     key={p.id}
                     onClick={() => { onNavigate(`/papers/${p.id}`); onClose(); }}
-                    className="p-3.5 rounded-2xl border border-[#E3EAF3] hover:border-[#0B6BE6] hover:bg-[#F5F8FC] transition-all cursor-pointer flex items-start justify-between group"
+                    className="p-3.5 rounded-2xl border border-[#E3EAF3] hover:border-[#0B6BE6] hover:bg-[#F5F8FC] transition-all cursor-pointer flex items-start justify-between group gap-3"
                   >
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-[#EBF3FE] text-[#0B6BE6]">
-                          {p.paperType}
-                        </span>
-                        <span className="text-xs text-gray-400 font-semibold">{p.year}</span>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="flex items-center gap-2">
+                          <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-[#EBF3FE] text-[#0B6BE6]">
+                            {p.paperType}
+                          </span>
+                          <span className="text-xs text-gray-400 font-semibold">{p.year}</span>
+                        </div>
+                        <PaperRating
+                          paper={{ id: p.id, doi: p.doi, source: 'collabx', title: p.title }}
+                          stats={paperStatsMap[getPaperId({ id: p.id, doi: p.doi, source: 'collabx' })]}
+                          currentUser={currentUser}
+                          onAuthRequired={() => {
+                            onClose();
+                            onNavigate('/login');
+                          }}
+                          onRated={(newStats) => {
+                            setPaperStatsMap(prev => ({ ...prev, [newStats.paperId]: newStats }));
+                          }}
+                        />
                       </div>
-                      <h4 className="font-bold text-sm text-[#0B2A55] group-hover:text-[#0B6BE6] transition-colors mt-1">
+                      <h4 className="font-bold text-sm text-[#0B2A55] group-hover:text-[#0B6BE6] transition-colors mt-1.5">
                         {p.title}
                       </h4>
                       <p className="text-xs text-gray-500 line-clamp-1 mt-0.5">{p.abstract}</p>
                     </div>
-                    <ArrowRight className="w-4 h-4 text-gray-400 group-hover:text-[#0B6BE6] group-hover:translate-x-1 transition-all shrink-0 mt-1" />
+                    <ArrowRight className="w-4 h-4 text-gray-400 group-hover:text-[#0B6BE6] group-hover:translate-x-1 transition-all shrink-0 mt-2" />
                   </div>
                 ))}
               </div>

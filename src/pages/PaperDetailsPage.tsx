@@ -16,13 +16,15 @@ import {
   Maximize2,
   ExternalLink
 } from 'lucide-react';
-import { Paper, User, PaperComment } from '../types';
+import { Paper, User, PaperComment, PaperStats } from '../types';
 import { storage } from '../services/storage';
 import { ExternalSearchService } from '../services/externalSearchService';
 import { Avatar } from '../components/common/Avatar';
 import { Badge } from '../components/common/Badge';
 import { PaperPdfModal } from '../components/common/PaperPdfModal';
 import { downloadPaperPdf, generatePaperPdf } from '../services/paperPdfService';
+import { PaperRating } from '../components/common/PaperRating';
+import { RatingService, getPaperId } from '../services/ratingService';
 
 interface PaperDetailsPageProps {
   paperId: string;
@@ -36,7 +38,19 @@ export const PaperDetailsPage: React.FC<PaperDetailsPageProps> = ({
   onNavigate
 }) => {
   const paper = storage.getPaper(paperId);
+  const [paperStats, setPaperStats] = useState<PaperStats | null>(null);
   const [copiedFormat, setCopiedFormat] = useState<string | null>(null);
+
+  React.useEffect(() => {
+    if (paper) {
+      const pid = getPaperId({ id: paper.id, doi: paper.doi, source: 'collabx' });
+      RatingService.batchGetPaperStats([pid]).then(statsMap => {
+        if (statsMap[pid]) {
+          setPaperStats(statsMap[pid]);
+        }
+      });
+    }
+  }, [paper]);
   const [isLiked, setIsLiked] = useState(false);
   const [downloadSuccess, setDownloadSuccess] = useState(false);
   const [isPdfModalOpen, setIsPdfModalOpen] = useState(false);
@@ -135,17 +149,35 @@ export const PaperDetailsPage: React.FC<PaperDetailsPageProps> = ({
 
       {/* Header Info Card */}
       <div className="bg-white rounded-3xl border border-[#E3EAF3] p-6 sm:p-10 space-y-6 shadow-xs">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="px-3 py-1 rounded-full text-xs font-bold bg-[#DCE6FB] text-[#0B6BE6]">
-            {paper.paperType}
-          </span>
-          <span className="px-3 py-1 rounded-full text-xs font-bold bg-[#DDF5EA] text-[#0E9F6E]">
-            {paper.areaName}
-          </span>
-          <span className="text-xs text-gray-500 font-semibold">{paper.year}</span>
-          {paper.doi && (
-            <span className="text-xs text-gray-400 font-mono">DOI: {paper.doi}</span>
-          )}
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="px-3 py-1 rounded-full text-xs font-bold bg-[#DCE6FB] text-[#0B6BE6]">
+              {paper.paperType}
+            </span>
+            <span className="px-3 py-1 rounded-full text-xs font-bold bg-[#DDF5EA] text-[#0E9F6E]">
+              {paper.areaName}
+            </span>
+            <span className="text-xs text-gray-500 font-semibold">{paper.year}</span>
+            {ExternalSearchService.cleanAndValidateDoi(paper.doi) && (
+              <a
+                href={`https://doi.org/${ExternalSearchService.cleanAndValidateDoi(paper.doi)}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-xs text-[#1565E8] hover:underline font-mono font-semibold inline-flex items-center gap-1 bg-[#EEF4FF] px-2.5 py-0.5 rounded-md border border-[#BFDBFE]"
+              >
+                <span>DOI: {ExternalSearchService.cleanAndValidateDoi(paper.doi)}</span>
+                <ExternalLink className="w-3 h-3" />
+              </a>
+            )}
+          </div>
+          <PaperRating
+            paper={{ id: paper.id, doi: paper.doi, source: 'collabx', title: paper.title }}
+            stats={paperStats}
+            currentUser={currentUser}
+            onAuthRequired={() => onNavigate('/login')}
+            onRated={(newStats) => setPaperStats(newStats)}
+            size="md"
+          />
         </div>
 
         <h1 className="text-2xl sm:text-3xl font-extrabold text-[#0B2A55] tracking-tight leading-snug">

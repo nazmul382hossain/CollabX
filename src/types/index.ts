@@ -260,6 +260,23 @@ export interface Paper {
   createdAt: string;
 }
 
+export interface PaperRatingDoc {
+  id: string; // `${paperId}_${userId}`
+  paperId: string;
+  userId: string;
+  rating: number; // 1-5
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PaperStats {
+  paperId: string;
+  ratingSum: number;
+  ratingCount: number;
+  average: number;
+  updatedAt?: string;
+}
+
 export interface PaperComment {
   id: string;
   paperId: string;

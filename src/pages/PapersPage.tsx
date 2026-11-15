@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { 
   BookOpen, 
   Search, 
@@ -20,7 +20,7 @@ import {
   Eye,
   AlertCircle
 } from 'lucide-react';
-import { Paper, User, PaperComment } from '../types';
+import { Paper, User, PaperComment, PaperStats } from '../types';
 import { storage } from '../services/storage';
 import { ExternalSearchService } from '../services/externalSearchService';
 import { Avatar } from '../components/common/Avatar';
@@ -28,6 +28,8 @@ import { Badge } from '../components/common/Badge';
 import { PaperPdfModal } from '../components/common/PaperPdfModal';
 import { generateSamplePaperPdfDataUrl, downloadPaperPdf } from '../services/paperPdfService';
 import { formatFileSize } from '../services/cvService';
+import { PaperRating } from '../components/common/PaperRating';
+import { RatingService, getPaperId } from '../services/ratingService';
 
 interface PapersPageProps {
   currentUser: User | null;
@@ -38,7 +40,8 @@ export const PapersPage: React.FC<PapersPageProps> = ({ currentUser, onNavigate 
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedArea, setSelectedArea] = useState('all');
   const [selectedType, setSelectedType] = useState('all');
-  const [sortBy, setSortBy] = useState<'latest' | 'views' | 'downloads'>('latest');
+  const [sortBy, setSortBy] = useState<'latest' | 'highest_rated' | 'views' | 'downloads'>('latest');
+  const [paperStatsMap, setPaperStatsMap] = useState<Record<string, PaperStats>>({});
   const [uploadModalOpen, setUploadModalOpen] = useState(false);
   const [viewingPdfPaper, setViewingPdfPaper] = useState<Paper | null>(null);
 
@@ -65,6 +68,18 @@ export const PapersPage: React.FC<PapersPageProps> = ({ currentUser, onNavigate 
 
   const papers = storage.getPapers();
 
+  const paperIdsKey = papers.map(p => getPaperId({ id: p.id, doi: p.doi, source: 'collabx' })).join('|');
+
+  // Batched retrieval of community ratings for repository papers
+  useEffect(() => {
+    if (papers.length > 0) {
+      const ids = papers.map(p => getPaperId({ id: p.id, doi: p.doi, source: 'collabx' }));
+      RatingService.batchGetPaperStats(ids).then(stats => {
+        setPaperStatsMap(prev => ({ ...prev, ...stats }));
+      });
+    }
+  }, [paperIdsKey]);
+
   const filteredPapers = papers.filter(p => {
     if (selectedArea !== 'all' && p.areaName.toLowerCase() !== selectedArea.toLowerCase()) return false;
     if (selectedType !== 'all' && p.paperType !== selectedType) return false;
@@ -79,6 +94,21 @@ export const PapersPage: React.FC<PapersPageProps> = ({ currentUser, onNavigate 
     }
     return true;
   }).sort((a, b) => {
+    if (sortBy === 'highest_rated') {
+      const aId = getPaperId({ id: a.id, doi: a.doi, source: 'collabx' });
+      const bId = getPaperId({ id: b.id, doi: b.doi, source: 'collabx' });
+      const aStats = paperStatsMap[aId];
+      const bStats = paperStatsMap[bId];
+      const aHas = (aStats?.ratingCount || 0) > 0;
+      const bHas = (bStats?.ratingCount || 0) > 0;
+      if (aHas && !bHas) return -1;
+      if (!aHas && bHas) return 1;
+      if (aHas && bHas) {
+        if (bStats.average !== aStats.average) return bStats.average - aStats.average;
+        return bStats.ratingCount - aStats.ratingCount;
+      }
+      return 0;
+    }
     if (sortBy === 'views') return b.views - a.views;
     if (sortBy === 'downloads') return b.downloads - a.downloads;
     return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
@@ -270,6 +300,7 @@ export const PapersPage: React.FC<PapersPageProps> = ({ currentUser, onNavigate 
             className="bg-[#F5F8FC] border border-[#E3EAF3] rounded-xl px-3 py-2 text-gray-700"
           >
             <option value="latest">Latest</option>
+            <option value="highest_rated">Highest rated</option>
             <option value="views">Most Read</option>
             <option value="downloads">Most Downloaded</option>
           </select>
@@ -293,11 +324,22 @@ export const PapersPage: React.FC<PapersPageProps> = ({ currentUser, onNavigate 
                   <span className="text-xs text-gray-400 font-semibold">{paper.year}</span>
                   <span className="text-xs text-gray-400">• {paper.areaName}</span>
                 </div>
-                {paper.aiAssisted && (
-                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-[#FEF3C7] text-[#D97706] flex items-center gap-1">
-                    <Sparkles className="w-3 h-3" /> AI-Assisted
-                  </span>
-                )}
+                <div className="flex items-center gap-2">
+                  {paper.aiAssisted && (
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-[#FEF3C7] text-[#D97706] flex items-center gap-1">
+                      <Sparkles className="w-3 h-3" /> AI-Assisted
+                    </span>
+                  )}
+                  <PaperRating
+                    paper={{ id: paper.id, doi: paper.doi, source: 'collabx', title: paper.title }}
+                    stats={paperStatsMap[getPaperId({ id: paper.id, doi: paper.doi, source: 'collabx' })]}
+                    currentUser={currentUser}
+                    onAuthRequired={() => onNavigate('/login')}
+                    onRated={(newStats) => {
+                      setPaperStatsMap(prev => ({ ...prev, [newStats.paperId]: newStats }));
+                    }}
+                  />
+                </div>
               </div>
 
               <h3 className="font-extrabold text-base text-[#0B2A55] group-hover:text-[#0B6BE6] transition-colors line-clamp-2">

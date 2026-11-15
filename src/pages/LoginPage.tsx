@@ -12,7 +12,6 @@ import {
   X
 } from 'lucide-react';
 import { User } from '../types';
-import { authService } from '../services/authService';
 import { ASSETS } from '../data/assets';
 import { Logo } from '../components/common/Logo';
 import { ForgotPasswordModal } from '../components/auth/ForgotPasswordModal';
@@ -31,7 +30,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
   message,
   returnUrl: propReturnUrl
 }) => {
-  const { signInWithSocial } = useAuth();
+  const { loginWithEmail, signInWithSocial } = useAuth();
   const [activeSocialLoading, setActiveSocialLoading] = useState<'Google' | 'GitHub' | null>(null);
   const [isForgotPasswordOpen, setIsForgotPasswordOpen] = useState(false);
   const [email, setEmail] = useState('');
@@ -128,8 +127,8 @@ export const LoginPage: React.FC<LoginPageProps> = ({
     setIsSubmitting(true);
 
     try {
-      // Execute strict backend/service authentication check
-      const result = await authService.login(email, password);
+      // Execute strict authentication check through AuthContext so global auth state updates synchronously
+      const result = await loginWithEmail(email, password);
 
       if (!result.success || !result.user) {
         setError(result.error || 'Invalid email or password.');

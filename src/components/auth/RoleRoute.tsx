@@ -16,13 +16,10 @@ export const RoleRoute: React.FC<RoleRouteProps> = ({
   onNavigate,
   onAccessDenied
 }) => {
-  if (!currentUser) {
-    return null;
-  }
-
-  const isAllowed = allowedRoles.includes(currentUser.role);
+  const isAllowed = currentUser ? allowedRoles.includes(currentUser.role) : false;
 
   useEffect(() => {
+    if (!currentUser) return;
     if (!isAllowed) {
       if (onAccessDenied) {
         onAccessDenied();
@@ -49,10 +46,9 @@ export const RoleRoute: React.FC<RoleRouteProps> = ({
 
       onNavigate(targetDashboard);
     }
-  }, [isAllowed, currentUser.role, onNavigate, onAccessDenied]);
+  }, [isAllowed, currentUser, onNavigate, onAccessDenied]);
 
-  // Prevent any flash of the forbidden page content
-  if (!isAllowed) {
+  if (!currentUser || !isAllowed) {
     return null;
   }
 

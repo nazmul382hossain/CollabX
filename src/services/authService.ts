@@ -8,16 +8,23 @@ import { storage } from './storage';
 import { hashPassword, verifyPassword, generateSalt } from './cryptoUtils';
 import { ASSETS } from '../data/assets';
 import { publicProfileService } from './publicProfileService';
-import { db, auth } from './firebaseAuth';
-import { doc, getDoc, updateDoc } from 'firebase/firestore';
+import { db, auth, isFirebaseConfigured } from './firebaseAuth';
+import { doc, getDoc, setDoc, updateDoc } from 'firebase/firestore';
 import { 
   signInWithEmailAndPassword as fbSignIn,
+  createUserWithEmailAndPassword as fbCreateUser,
+  signOut as fbSignOut,
   sendPasswordResetEmail, 
   fetchSignInMethodsForEmail, 
   ActionCodeSettings,
   confirmPasswordReset,
   verifyPasswordResetCode
 } from 'firebase/auth';
+
+let manualRegistrationInProgress = false;
+export function isManualRegistrationInProgress(): boolean {
+  return manualRegistrationInProgress;
+}
 
 export interface RequestPasswordResetResult {
   success: boolean;
@@ -120,7 +127,8 @@ class AuthService {
     }
 
     // Attempt authentic Firebase Auth & Firestore verification first
-    if (auth && db) {
+    let fbLoginErrorCode = '';
+    if (auth && db && isFirebaseConfigured()) {
       try {
         const cred = await fbSignIn(auth, cleanEmail, cleanPassword);
         const fbUser = cred.user;
@@ -130,20 +138,91 @@ class AuthService {
         if (userSnap.exists()) {
           const firestoreUser = userSnap.data() as User;
           if (firestoreUser.status === 'inactive') {
+            await fbSignOut(auth).catch(() => {});
             return {
               success: false,
               error: 'Your account is currently disabled or inactive. Please contact the administrator.'
             };
           }
 
+          if (firestoreUser.profileComplete !== true) {
+            await updateDoc(userDocRef, { profileComplete: true, verified: true }).catch(() => {});
+          }
+
           const account: User = {
             ...firestoreUser,
             id: fbUser.uid,
             email: fbUser.email || cleanEmail,
-            role: firestoreUser.role || 'student'
+            role: firestoreUser.role || 'student',
+            status: firestoreUser.status || 'active',
+            profileComplete: true,
+            verified: firestoreUser.verified ?? true
           };
 
-          storage.updateUser(account);
+          storage.addUser(account);
+          storage.establishAuthenticatedSession(account);
+
+          return {
+            success: true,
+            user: account,
+            redirect: this.getDashboardRoute(account.role)
+          };
+        } else {
+          // Firebase Auth succeeded, check local storage profile or bootstrap user doc
+          const localMatch = storage.getUsers().find(
+            u => u.id === fbUser.uid || u.email.toLowerCase() === cleanEmail
+          );
+          const account: User = localMatch
+            ? {
+                ...localMatch,
+                id: fbUser.uid,
+                email: fbUser.email || cleanEmail,
+                profileComplete: true,
+                verified: true
+              }
+            : {
+                id: fbUser.uid,
+                name: fbUser.displayName || cleanEmail.split('@')[0] || 'Academic Scholar',
+                email: fbUser.email || cleanEmail,
+                role: 'student',
+                status: 'active',
+                authProvider: 'password',
+                avatar: ASSETS.avatars.ash,
+                headline: 'Student Researcher',
+                department: 'Computer Science and Engineering',
+                institution: 'Port City International University',
+                bio: 'CollabX student collaborating in academic research and innovation projects.',
+                interests: ['Artificial Intelligence', 'Data Science'],
+                skills: ['Python', 'Data Analysis'],
+                links: {},
+                verified: true,
+                profileComplete: true,
+                verificationStatus: 'verified',
+                createdAt: new Date().toISOString()
+              };
+
+          await setDoc(userDocRef, {
+            id: account.id,
+            name: account.name,
+            email: account.email,
+            role: account.role,
+            status: account.status,
+            profileComplete: true,
+            verified: true,
+            verificationStatus: account.verificationStatus || (account.role === 'student' ? 'verified' : 'pending'),
+            authProvider: 'password',
+            department: account.department,
+            institution: account.institution,
+            avatar: account.avatar,
+            headline: account.headline,
+            bio: account.bio,
+            interests: account.interests,
+            skills: account.skills,
+            links: account.links || {},
+            createdAt: account.createdAt
+          }, { merge: true }).catch(() => {});
+
+          storage.addUser(account);
           storage.establishAuthenticatedSession(account);
 
           return {
@@ -153,16 +232,22 @@ class AuthService {
           };
         }
       } catch (fbErr: any) {
-        console.warn('Firebase login attempt notice:', fbErr?.code);
+        fbLoginErrorCode = fbErr?.code || '';
       }
     }
 
-    // Look up user in database
+    // Look up user in local database (handles seeded demo users, offline mode, and local registrations)
     const users = storage.getUsers();
-    const account = users.find(u => u.email.toLowerCase() === cleanEmail);
+    const matchedLocal = users.find(u => u.email.toLowerCase() === cleanEmail);
 
     // If account does not exist -> REJECT with generic message
-    if (!account) {
+    if (!matchedLocal) {
+      if (fbLoginErrorCode === 'auth/too-many-requests') {
+        return {
+          success: false,
+          error: 'Too many failed login attempts. Please wait a moment and try again.'
+        };
+      }
       return {
         success: false,
         error: 'Invalid email or password.'
@@ -170,7 +255,7 @@ class AuthService {
     }
 
     // Verify submitted password against stored password hash
-    const isPasswordValid = await verifyPassword(cleanPassword, account.passwordHash, account.salt);
+    const isPasswordValid = await verifyPassword(cleanPassword, matchedLocal.passwordHash, matchedLocal.salt);
     if (!isPasswordValid) {
       return {
         success: false,
@@ -179,21 +264,87 @@ class AuthService {
     }
 
     // Verify account active status
-    if (account.status === 'inactive') {
+    if (matchedLocal.status === 'inactive') {
       return {
         success: false,
         error: 'Your account is currently disabled or inactive. Please contact the administrator.'
       };
     }
 
-    if (account.status === 'pending') {
+    if (matchedLocal.status === 'pending') {
       return {
         success: false,
         error: 'Your account registration is currently pending administrative verification.'
       };
     }
 
+    const account: User = {
+      ...matchedLocal,
+      profileComplete: true,
+      verified: matchedLocal.verified ?? true
+    };
+
+    // If Firebase Auth is configured and this locally-registered user doesn't exist in Firebase Auth yet,
+    // silently provision their Firebase Auth + Firestore doc so future logins & Firestore rules work seamlessly.
+    if (
+      auth &&
+      db &&
+      isFirebaseConfigured() &&
+      (fbLoginErrorCode === 'auth/user-not-found' || fbLoginErrorCode === 'auth/invalid-credential')
+    ) {
+      try {
+        manualRegistrationInProgress = true;
+        const cred = await fbCreateUser(auth, cleanEmail, cleanPassword);
+        const uid = cred.user.uid;
+        account.id = uid;
+        await setDoc(doc(db, 'users', uid), {
+          id: uid,
+          name: account.name,
+          email: cleanEmail,
+          role: account.role === 'admin' ? 'student' : account.role,
+          status: 'active',
+          profileComplete: true,
+          verified: true,
+          verificationStatus: account.role === 'student' ? 'verified' : 'pending',
+          authProvider: 'password',
+          department: account.department,
+          institution: account.institution,
+          universityId: account.universityId || null,
+          institutionalId: account.universityId || null,
+          avatar: account.avatar,
+          headline: account.headline,
+          bio: account.bio,
+          interests: account.interests || [],
+          skills: account.skills || [],
+          links: account.links || {},
+          createdAt: account.createdAt
+        }, { merge: true }).catch(() => {});
+        await setDoc(doc(db, 'publicProfiles', uid), {
+          id: uid,
+          uid,
+          name: account.name,
+          photoURL: account.avatar || '',
+          avatar: account.avatar || '',
+          headline: account.headline || '',
+          department: account.department || '',
+          institution: account.institution || '',
+          role: account.role,
+          interests: account.interests || [],
+          skills: account.skills || [],
+          bio: account.bio || '',
+          links: account.links || {},
+          verified: true,
+          updatedAt: new Date().toISOString()
+        }, { merge: true }).catch(() => {});
+      } catch {
+        // Ignore if email already exists in Firebase with different password or email/pw disabled
+      } finally {
+        manualRegistrationInProgress = false;
+      }
+    }
+
     // Regenerate and establish session
+    storage.addUser(account);
     storage.establishAuthenticatedSession(account);
 
     return {
@@ -204,7 +355,7 @@ class AuthService {
   }
 
   /**
-   * Register a new user in the database
+   * Register a new user in the database (Firebase Auth + Firestore when configured, + local storage)
    * Enforces:
    * 1. Required field checks
    * 2. Email format validation
@@ -294,6 +445,9 @@ class AuthService {
         ? `Research Supervisor & Faculty Mentor`
         : `Academic Researcher`;
 
+    const verificationStatus = role === 'student' ? 'verified' : 'pending';
+    const createdAt = new Date().toISOString();
+
     const newUser: User = {
       id: `user-${Date.now()}`,
       name,
@@ -301,8 +455,10 @@ class AuthService {
       passwordHash,
       salt,
       universityId: universityId || undefined,
+      institutionalId: universityId || undefined,
       role,
       status: 'active',
+      authProvider: 'password',
       avatar,
       headline,
       department,
@@ -312,10 +468,88 @@ class AuthService {
       skills: role === 'student' ? ['Python', 'Data Analysis'] : ['Research Methodology', 'Data Science'],
       links: {},
       verified: true,
-      createdAt: new Date().toISOString()
+      profileComplete: true,
+      verificationStatus,
+      createdAt
     };
 
-    // 9. Save new user into database and sync public profile
+    // 9. Register in Firebase Auth & Firestore when configured
+    if (auth && db && isFirebaseConfigured()) {
+      try {
+        manualRegistrationInProgress = true;
+        const cred = await fbCreateUser(auth, cleanEmail, password);
+        const uid = cred.user.uid;
+        newUser.id = uid;
+
+        // Write users/{uid} with profileComplete: true and required rules fields
+        await setDoc(doc(db, 'users', uid), {
+          id: uid,
+          name,
+          email: cleanEmail,
+          role,
+          status: 'active',
+          profileComplete: true,
+          verified: true,
+          verificationStatus,
+          authProvider: 'password',
+          universityId: universityId || null,
+          institutionalId: universityId || null,
+          department,
+          institution,
+          avatar,
+          headline,
+          bio: newUser.bio,
+          interests: newUser.interests,
+          skills: newUser.skills,
+          links: newUser.links,
+          createdAt
+        }, { merge: true });
+
+        // Write publicProfiles/{uid}
+        await setDoc(doc(db, 'publicProfiles', uid), {
+          id: uid,
+          uid,
+          name,
+          photoURL: avatar || '',
+          avatar: avatar || '',
+          headline,
+          department,
+          institution,
+          role,
+          interests: newUser.interests,
+          skills: newUser.skills,
+          bio: newUser.bio,
+          links: newUser.links,
+          verified: true,
+          updatedAt: createdAt
+        }, { merge: true }).catch(() => {});
+
+        // Sign out so visitor explicitly logs in from Login page
+        await fbSignOut(auth).catch(() => {});
+      } catch (fbErr: any) {
+        const code = fbErr?.code || '';
+        if (code === 'auth/email-already-in-use') {
+          manualRegistrationInProgress = false;
+          return {
+            success: false,
+            error: 'An account with this email address already exists. Please log in.'
+          };
+        }
+        if (code === 'auth/weak-password') {
+          manualRegistrationInProgress = false;
+          return {
+            success: false,
+            error: 'Password is too weak. Please choose at least 8 characters with letters and numbers.'
+          };
+        }
+        // For auth/operation-not-allowed or network issues, fall back cleanly to local storage registration
+        await fbSignOut(auth).catch(() => {});
+      } finally {
+        manualRegistrationInProgress = false;
+      }
+    }
+
+    // 10. Save new user into local storage & public profile cache
     storage.addUser(newUser);
     publicProfileService.syncUserProfile(newUser);
 

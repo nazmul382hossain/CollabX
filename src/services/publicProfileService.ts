@@ -1,6 +1,6 @@
 import { doc, getDoc, getDocs, setDoc, collection } from 'firebase/firestore';
 import { PublicProfile, User } from '../types';
-import { db } from './firebaseAuth';
+import { db, auth } from './firebaseAuth';
 import { storage } from './storage';
 import { SEED_USERS } from '../data/seedData';
 
@@ -197,8 +197,8 @@ class PublicProfileService {
     // 2. Also keep local storage users updated
     storage.updateUser(user);
 
-    // 3. If Firestore is active, update BOTH collections
-    if (db) {
+    // 3. If Firestore is active and this user is currently signed into Firebase Auth, update BOTH collections
+    if (db && auth?.currentUser && auth.currentUser.uid === user.id) {
       try {
         // Document 1: publicProfiles/{userId} (ONLY public fields, zero email/passwords/CVs)
         const publicDocData: Record<string, any> = {

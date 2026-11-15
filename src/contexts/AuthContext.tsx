@@ -13,6 +13,7 @@ import { doc, getDoc } from 'firebase/firestore';
 import { auth, db, isFirebaseConfigured } from '../services/firebaseAuth';
 import { User } from '../types';
 import { storage } from '../services/storage';
+import { authService, isManualRegistrationInProgress, LoginResult } from '../services/authService';
 
 export type AuthStatus = 'loading' | 'signedOut' | 'needsProfile' | 'ready';
 
@@ -23,6 +24,7 @@ export interface AuthContextType {
   refreshAuth: () => Promise<void>;
   signOutUser: () => Promise<void>;
   signInWithSocial: (provider: 'Google' | 'GitHub') => Promise<{ success: boolean; cancelled?: boolean; error?: string }>;
+  loginWithEmail: (email: string, password: string) => Promise<LoginResult>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -34,8 +36,27 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   // Helper to resolve Firestore user profile and determine state machine transition
   const resolveUserProfile = useCallback(async (fbUser: FirebaseUser | null) => {
+    // Ignore transient auth changes triggered inside manual registration (create -> write -> signOut)
+    if (isManualRegistrationInProgress()) {
+      return;
+    }
+
     if (!fbUser) {
-      console.log('[auth] transition -> signedOut (no Firebase user)');
+      // Check if an active local/offline session exists (e.g., demo accounts or local email+password signup)
+      const localUser = storage.getCurrentUser();
+      if (localUser && localUser.status === 'active') {
+        const readyLocalUser: User = {
+          ...localUser,
+          profileComplete: true,
+          verified: localUser.verified ?? true
+        };
+        setFirebaseUser(null);
+        setCurrentUser(readyLocalUser);
+        setAuthStatus('ready');
+        return;
+      }
+
+      console.log('[auth] transition -> signedOut (no Firebase or local session)');
       setFirebaseUser(null);
       setCurrentUser(null);
       setAuthStatus('signedOut');
@@ -43,9 +64,36 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }
 
     setFirebaseUser(fbUser);
+    const isPasswordUser = fbUser.providerData?.some(p => p.providerId === 'password') ?? false;
+
+    const resolveLocalFallback = (): boolean => {
+      const currentLocal = storage.getCurrentUser();
+      const matched =
+        (currentLocal && (currentLocal.id === fbUser.uid || (fbUser.email && currentLocal.email.toLowerCase() === fbUser.email.toLowerCase())))
+          ? currentLocal
+          : storage.getUsers().find(
+              u => u.id === fbUser.uid || (fbUser.email && u.email.toLowerCase() === fbUser.email.toLowerCase())
+            );
+
+      if (matched && matched.status === 'active') {
+        const readyUser: User = {
+          ...matched,
+          id: fbUser.uid,
+          email: fbUser.email || matched.email,
+          profileComplete: true,
+          verified: matched.verified ?? true
+        };
+        storage.addUser(readyUser);
+        storage.setCurrentUser(readyUser.id);
+        setCurrentUser(readyUser);
+        setAuthStatus('ready');
+        return true;
+      }
+      return false;
+    };
 
     if (!db) {
-      // Firebase Firestore not configured
+      if (resolveLocalFallback()) return;
       console.warn('[auth] Firestore db not configured, fallback to needsProfile');
       setCurrentUser(null);
       setAuthStatus('needsProfile');
@@ -58,8 +106,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
       if (snap.exists()) {
         const data = snap.data();
-        const docExists = true;
-        const profileComplete = data?.profileComplete === true;
+        const profileComplete = data?.profileComplete === true || isPasswordUser;
 
         if (data?.status === 'inactive') {
           console.log(`[auth] transition -> signedOut (uid=${fbUser.uid}, account inactive in Firestore)`);
@@ -78,12 +125,12 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             email: data.email || fbUser.email || '',
             role: data.role || 'student',
             status: data.status || 'active',
-            avatar: data.photoURL || fbUser.photoURL || '',
-            headline: data.headline || `${data.role} • ${data.department}`,
+            avatar: data.avatar || data.photoURL || fbUser.photoURL || '',
+            headline: data.headline || `${data.role || 'student'} • ${data.department || 'Computer Science & Engineering'}`,
             department: data.department || 'Computer Science & Engineering',
             institution: data.institution || 'Port City International University',
-            institutionalId: data.institutionalId || data.studentId || undefined,
-            universityId: data.institutionalId || data.studentId || undefined,
+            institutionalId: data.institutionalId || data.studentId || data.universityId || undefined,
+            universityId: data.universityId || data.institutionalId || data.studentId || undefined,
             bio: data.bio || '',
             interests: data.interests || [],
             skills: data.skills || [],
@@ -92,10 +139,11 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             profileComplete: true,
             verificationStatus: data.verificationStatus || (data.role === 'student' ? 'verified' : 'pending'),
             emailVerified: fbUser.emailVerified,
-            photoURL: data.photoURL || fbUser.photoURL || undefined,
+            photoURL: data.photoURL || data.avatar || fbUser.photoURL || undefined,
             createdAt: typeof data.createdAt === 'string' ? data.createdAt : new Date().toISOString()
           };
 
+          storage.addUser(fullUser);
           storage.setCurrentUser(fbUser.uid);
           setCurrentUser(fullUser);
           console.log(`[auth] transition -> ready (uid=${fbUser.uid}, doc exists=true, profileComplete=true, role=${fullUser.role})`);
@@ -106,13 +154,15 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           setAuthStatus('needsProfile');
         }
       } else {
-        // Document does NOT exist in Firestore
+        // Document does NOT exist in Firestore: check local profile for password sign-ups before requiring social profile completion
+        if (resolveLocalFallback()) return;
         setCurrentUser(null);
         console.log(`[auth] transition -> needsProfile (uid=${fbUser.uid}, doc exists=false)`);
         setAuthStatus('needsProfile');
       }
     } catch (err) {
       console.error('[auth] Error fetching users/{uid} document:', err);
+      if (isPasswordUser && resolveLocalFallback()) return;
       // Keep in needsProfile so user can re-verify or retry
       setCurrentUser(null);
       setAuthStatus('needsProfile');
@@ -122,8 +172,14 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   // Listen to onAuthStateChanged & getRedirectResult
   useEffect(() => {
     if (!isFirebaseConfigured() || !auth) {
-      console.log('[auth] Firebase not configured, signedOut');
-      setAuthStatus('signedOut');
+      const localUser = storage.getCurrentUser();
+      if (localUser && localUser.status === 'active') {
+        setCurrentUser({ ...localUser, profileComplete: true, verified: localUser.verified ?? true });
+        setAuthStatus('ready');
+      } else {
+        console.log('[auth] Firebase not configured, signedOut');
+        setAuthStatus('signedOut');
+      }
       return;
     }
 
@@ -154,12 +210,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   }, [resolveUserProfile]);
 
   const refreshAuth = useCallback(async () => {
-    if (!auth?.currentUser) {
-      setAuthStatus('signedOut');
-      setCurrentUser(null);
-      return;
-    }
-    await resolveUserProfile(auth.currentUser);
+    await resolveUserProfile(auth?.currentUser || null);
   }, [resolveUserProfile]);
 
   const signOutUser = useCallback(async () => {
@@ -172,6 +223,23 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     setCurrentUser(null);
     console.log('[auth] transition -> signedOut');
     setAuthStatus('signedOut');
+  }, []);
+
+  const loginWithEmail = useCallback(async (emailInput: string, passwordInput: string): Promise<LoginResult> => {
+    const result = await authService.login(emailInput, passwordInput);
+    if (result.success && result.user) {
+      const readyUser: User = {
+        ...result.user,
+        profileComplete: true,
+        verified: result.user.verified ?? true
+      };
+      if (auth?.currentUser) {
+        setFirebaseUser(auth.currentUser);
+      }
+      setCurrentUser(readyUser);
+      setAuthStatus('ready');
+    }
+    return result;
   }, []);
 
   const signInWithSocial = useCallback(async (providerType: 'Google' | 'GitHub'): Promise<{ success: boolean; cancelled?: boolean; error?: string }> => {
@@ -251,7 +319,8 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         currentUser,
         refreshAuth,
         signOutUser,
-        signInWithSocial
+        signInWithSocial,
+        loginWithEmail
       }}
     >
       {children}

@@ -20,8 +20,12 @@ import {
 } from 'lucide-react';
 import { storage } from '../services/storage';
 import { ExternalSearchService } from '../services/externalSearchService';
-import { ExternalScholarlyResult, Project, Paper, PublicProfile } from '../types';
+import { ExternalScholarlyResult, Project, Paper, PublicProfile, PaperStats } from '../types';
 import { publicProfileService } from '../services/publicProfileService';
+import { AuthorDisplay } from '../components/common/AuthorDisplay';
+import { PaperRating } from '../components/common/PaperRating';
+import { RatingService, getPaperId } from '../services/ratingService';
+import { useAuth } from '../contexts/AuthContext';
 
 interface GlobalSearchPageProps {
   initialQuery?: string;
@@ -29,8 +33,10 @@ interface GlobalSearchPageProps {
 }
 
 export const GlobalSearchPage: React.FC<GlobalSearchPageProps> = ({ initialQuery = '', onNavigate }) => {
+  const { currentUser } = useAuth();
   const [query, setQuery] = useState(initialQuery);
   const [scholarlyResults, setScholarlyResults] = useState<ExternalScholarlyResult[]>([]);
+  const [paperStatsMap, setPaperStatsMap] = useState<Record<string, PaperStats>>({});
   const [loading, setLoading] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [citationFormat, setCitationFormat] = useState<'apa' | 'ieee' | 'harvard' | 'bibtex'>('apa');
@@ -38,10 +44,9 @@ export const GlobalSearchPage: React.FC<GlobalSearchPageProps> = ({ initialQuery
 
   // Filters
   const [selectedDocType, setSelectedDocType] = useState<string>('all');
-  const [studyDesignFilter, setStudyDesignFilter] = useState<string>('all');
   const [selectedSource, setSelectedSource] = useState<string>('all');
   const [openAccessOnly, setOpenAccessOnly] = useState<boolean>(false);
-  const [sortBy, setSortBy] = useState<'relevance' | 'citations' | 'year'>('relevance');
+  const [sortBy, setSortBy] = useState<'relevance' | 'highest_rated' | 'citations' | 'year'>('relevance');
   const [activeTab, setActiveTab] = useState<'global' | 'local_papers' | 'local_projects' | 'scholars'>('global');
 
   const projects = storage.getProjects();
@@ -70,7 +75,7 @@ export const GlobalSearchPage: React.FC<GlobalSearchPageProps> = ({ initialQuery
 
   // Local Institutional items matching query
   const matchedProjects = qLower ? projects.filter(p => 
-    p.title.toLowerCase().includes(qLower) ||
+    p.title.toLowerCase().includes(qLower) || 
     p.summary.toLowerCase().includes(qLower) ||
     p.areaName.toLowerCase().includes(qLower) ||
     p.requiredSkills.some(s => s.toLowerCase().includes(qLower))
@@ -90,6 +95,19 @@ export const GlobalSearchPage: React.FC<GlobalSearchPageProps> = ({ initialQuery
     u.skills.some(s => s.toLowerCase().includes(qLower))
   ) : publicProfiles;
 
+  // Batched retrieval of paperStats for all visible scholarly results & local repository papers
+  useEffect(() => {
+    const ids: string[] = [];
+    scholarlyResults.forEach(s => ids.push(getPaperId(s)));
+    matchedPapers.forEach(p => ids.push(getPaperId({ id: p.id, doi: p.doi, source: 'collabx' })));
+
+    if (ids.length > 0) {
+      RatingService.batchGetPaperStats(ids).then(stats => {
+        setPaperStatsMap(prev => ({ ...prev, ...stats }));
+      });
+    }
+  }, [scholarlyResults, matchedPapers]);
+
   // Filter & Sort Global Scholarly Results
   const filteredScholarly = scholarlyResults.filter(item => {
     // Document Type filter
@@ -106,20 +124,6 @@ export const GlobalSearchPage: React.FC<GlobalSearchPageProps> = ({ initialQuery
       }
     }
 
-    // Consensus Study Design filter
-    if (studyDesignFilter !== 'all') {
-      if (studyDesignFilter === 'meta') {
-        const isMeta = item.studyDesign?.includes('Meta') || item.studyDesign?.includes('Systematic');
-        if (!isMeta) return false;
-      } else if (studyDesignFilter === 'rct') {
-        const isRct = item.studyDesign?.includes('RCT') || item.studyDesign?.includes('Trial');
-        if (!isRct) return false;
-      } else if (studyDesignFilter === 'theses') {
-        const isTh = item.documentType === 'Thesis' || item.documentType === 'Dissertation' || item.studyDesign?.includes('Dissertation');
-        if (!isTh) return false;
-      }
-    }
-
     // Source filter
     if (selectedSource !== 'all' && item.source.toLowerCase() !== selectedSource.toLowerCase()) {
       return false;
@@ -132,6 +136,22 @@ export const GlobalSearchPage: React.FC<GlobalSearchPageProps> = ({ initialQuery
 
     return true;
   }).sort((a, b) => {
+    if (sortBy === 'highest_rated') {
+      const aId = getPaperId(a);
+      const bId = getPaperId(b);
+      const aStats = paperStatsMap[aId];
+      const bStats = paperStatsMap[bId];
+      const aHas = (aStats?.ratingCount || 0) > 0;
+      const bHas = (bStats?.ratingCount || 0) > 0;
+      // Papers with no ratings go last
+      if (aHas && !bHas) return -1;
+      if (!aHas && bHas) return 1;
+      if (aHas && bHas) {
+        if (bStats.average !== aStats.average) return bStats.average - aStats.average;
+        return bStats.ratingCount - aStats.ratingCount;
+      }
+      return 0;
+    }
     if (sortBy === 'citations') {
       return (b.citedByCount || 0) - (a.citedByCount || 0);
     }
@@ -253,7 +273,7 @@ export const GlobalSearchPage: React.FC<GlobalSearchPageProps> = ({ initialQuery
         <div className="flex flex-wrap items-center justify-between border-b border-[#E3EAF3] pb-3 gap-4">
           <div className="flex items-center gap-2 overflow-x-auto scrollbar-none text-xs font-bold">
             <button
-              onClick={() => { setActiveTab('global'); setStudyDesignFilter('all'); }}
+              onClick={() => setActiveTab('global')}
               className={`px-4 py-2.5 rounded-xl transition-all cursor-pointer flex items-center gap-2 ${
                 activeTab === 'global'
                   ? 'bg-[#0B2A55] text-white shadow-sm'
@@ -379,8 +399,9 @@ export const GlobalSearchPage: React.FC<GlobalSearchPageProps> = ({ initialQuery
                   onChange={(e) => setSortBy(e.target.value as any)}
                   className="bg-[#F8FAFC] border border-[#CBD5E1] rounded-xl px-3 py-1.5 font-bold text-[#0B2A55] cursor-pointer focus:outline-hidden"
                 >
-                  <option value="relevance">Highest Relevance</option>
-                  <option value="citations">Most Cited (Impact)</option>
+                  <option value="relevance">Relevance</option>
+                  <option value="highest_rated">Highest rated</option>
+                  <option value="citations">Most cited</option>
                   <option value="year">Latest Year</option>
                 </select>
               </div>
@@ -440,27 +461,36 @@ export const GlobalSearchPage: React.FC<GlobalSearchPageProps> = ({ initialQuery
                             </span>
                           ) : null}
 
-                          {/* Study Design Badge */}
-                          {item.studyDesign && (
-                            <span className="px-2 py-0.5 rounded-md text-[10px] font-black uppercase tracking-wide bg-[#F3E8FF] text-[#7E22CE] border border-[#E9D5FF]">
-                              {item.studyDesign}
-                            </span>
-                          )}
-
-                          {/* Sample Size Badge */}
-                          {item.sampleSize && (
-                            <span className="px-2 py-0.5 rounded-md text-[10px] font-bold text-gray-600 bg-gray-100 border border-gray-200">
-                              {item.sampleSize}
-                            </span>
-                          )}
                         </div>
 
-                        {/* DOI Badge */}
-                        {item.doi && (
-                          <span className="text-[11px] font-mono text-gray-400 bg-gray-50 px-2 py-0.5 rounded border border-gray-200">
-                            DOI: {item.doi}
-                          </span>
-                        )}
+                        {/* Top-Right Badges & Community Rating */}
+                        <div className="flex items-center gap-2">
+                          {/* Authentic Registered DOI Badge */}
+                          {item.doi && (
+                            <a
+                              href={`https://doi.org/${item.doi}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              onClick={(e) => e.stopPropagation()}
+                              className="inline-flex items-center gap-1 text-[11px] font-mono font-bold text-[#1565E8] bg-[#EEF4FF] hover:bg-[#DBEAFE] px-2.5 py-0.5 rounded-md border border-[#BFDBFE] transition-colors"
+                              title={`Official registered DOI: ${item.doi}`}
+                            >
+                              <span>DOI: {item.doi}</span>
+                              <ExternalLink className="w-2.5 h-2.5 shrink-0" />
+                            </a>
+                          )}
+
+                          {/* CollabX Community Rating */}
+                          <PaperRating
+                            paper={item}
+                            stats={paperStatsMap[getPaperId(item)]}
+                            currentUser={currentUser}
+                            onAuthRequired={() => onNavigate('/login')}
+                            onRated={(newStats) => {
+                              setPaperStatsMap(prev => ({ ...prev, [newStats.paperId]: newStats }));
+                            }}
+                          />
+                        </div>
                       </div>
 
                       {/* Title */}
@@ -501,9 +531,7 @@ export const GlobalSearchPage: React.FC<GlobalSearchPageProps> = ({ initialQuery
                       </div>
 
                       {/* Authors List */}
-                      <p className="text-xs text-gray-400">
-                        Authors: <span className="text-gray-700 font-semibold">{item.authors.join(', ')}</span>
-                      </p>
+                      <AuthorDisplay authors={item.authors} className="text-xs text-gray-400" />
 
                       {/* Card Footer Actions */}
                       <div className="pt-3 border-t border-gray-100 flex flex-wrap items-center justify-between gap-3 text-xs">
@@ -603,11 +631,22 @@ export const GlobalSearchPage: React.FC<GlobalSearchPageProps> = ({ initialQuery
                   onClick={() => onNavigate(`/papers/${p.id}`)}
                   className="bg-white p-5 rounded-2xl border border-[#E3EAF3] hover:border-[#0B6BE6] cursor-pointer transition-all space-y-3 group shadow-2xs"
                 >
-                  <div className="flex items-center justify-between">
-                    <span className="px-2.5 py-0.5 rounded-md bg-[#EBF3FE] text-[#0B6BE6] text-xs font-bold">
-                      {p.paperType}
-                    </span>
-                    <span className="text-xs text-gray-400 font-semibold">{p.year}</span>
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <span className="px-2.5 py-0.5 rounded-md bg-[#EBF3FE] text-[#0B6BE6] text-xs font-bold">
+                        {p.paperType}
+                      </span>
+                      <span className="text-xs text-gray-400 font-semibold">{p.year}</span>
+                    </div>
+                    <PaperRating
+                      paper={{ id: p.id, doi: p.doi, source: 'collabx', title: p.title }}
+                      stats={paperStatsMap[getPaperId({ id: p.id, doi: p.doi, source: 'collabx' })]}
+                      currentUser={currentUser}
+                      onAuthRequired={() => onNavigate('/login')}
+                      onRated={(newStats) => {
+                        setPaperStatsMap(prev => ({ ...prev, [newStats.paperId]: newStats }));
+                      }}
+                    />
                   </div>
                   <h4 className="font-bold text-base text-[#0B2A55] group-hover:text-[#0B6BE6] transition-colors leading-snug">
                     {p.title}

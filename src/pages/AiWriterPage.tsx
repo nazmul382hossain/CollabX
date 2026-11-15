@@ -78,9 +78,9 @@ export const AiWriterPage: React.FC<AiWriterPageProps> = ({ currentUser, onNavig
     const scholarly = await ExternalSearchService.searchScholarly(topic);
     setVerifiedRefs(scholarly.slice(0, 4).map(s => ({
       title: s.title,
-      authors: s.authors.join(', '),
+      authors: ExternalSearchService.formatAuthorsForCitation(s.authors),
       year: s.year,
-      doi: s.doi || '10.1109/IEEE.2024.120',
+      doi: s.doi,
       verified: true
     })));
   };
@@ -411,8 +411,21 @@ export const AiWriterPage: React.FC<AiWriterPageProps> = ({ currentUser, onNavig
                 {verifiedRefs.map((ref, idx) => (
                   <div key={idx} className="p-3 bg-[#F5F8FC] rounded-xl border border-[#E3EAF3] text-[11px] space-y-1">
                     <span className="font-bold text-[#0B2A55] block line-clamp-2">{ref.title}</span>
-                    <span className="text-gray-500 block">{ref.authors} ({ref.year})</span>
-                    <span className="text-[10px] text-[#0E9F6E] font-mono block">DOI: {ref.doi} (Verified)</span>
+                    {ref.authors && (
+                      <span className="text-gray-500 block">{ref.authors} {ref.year ? `(${ref.year})` : ''}</span>
+                    )}
+                    {ref.doi ? (
+                      <a
+                        href={`https://doi.org/${ref.doi}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-[10px] text-[#1565E8] hover:underline font-mono font-semibold block"
+                      >
+                        DOI: {ref.doi}
+                      </a>
+                    ) : (
+                      <span className="text-[10px] text-gray-400 block">Verified Open-Access Record</span>
+                    )}
                   </div>
                 ))}
               </div>

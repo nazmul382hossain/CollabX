@@ -318,5 +318,36 @@ service cloud.firestore {
         isAdmin()
       );
     }
+
+    // =========================================================================
+    // 8. RATINGS & PAPER STATS COLLECTIONS (CollabX Community Rating System)
+    // - ratings/{ratingId}: Document ID is ${paperId}_${userId}.
+    //   Only authenticated users can read ratings documents.
+    //   Users can only create/update their own rating (request.auth.uid == userId).
+    //   Rating must be an integer from 1 to 5.
+    // - paperStats/{paperId}: Aggregated community rating metrics.
+    //   Readable by everyone (including guest visitors searching literature).
+    //   Writable by authenticated users participating in rating transactions.
+    // =========================================================================
+    match /ratings/{ratingId} {
+      allow read: if isSignedIn();
+
+      allow create, update: if isSignedIn() &&
+        request.resource.data.userId == request.auth.uid &&
+        request.resource.data.paperId is string &&
+        request.resource.data.rating is int &&
+        request.resource.data.rating >= 1 &&
+        request.resource.data.rating <= 5;
+
+      allow delete: if isSignedIn() && (
+        resource.data.userId == request.auth.uid || isAdmin()
+      );
+    }
+
+    match /paperStats/{paperId} {
+      allow read: if true;
+      allow write: if isSignedIn();
+    }
   }
 }
+

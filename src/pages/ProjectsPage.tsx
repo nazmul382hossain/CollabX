@@ -23,8 +23,11 @@ import { storage } from '../services/storage';
 import { RecommendationService } from '../services/recommendationService';
 import { ExternalSearchService } from '../services/externalSearchService';
 import { RESEARCH_AREAS } from '../data/seedData';
-import { Project, User, ExternalScholarlyResult, Paper } from '../types';
+import { Project, User, ExternalScholarlyResult, Paper, PaperStats } from '../types';
 import { Badge } from '../components/common/Badge';
+import { AuthorDisplay } from '../components/common/AuthorDisplay';
+import { PaperRating } from '../components/common/PaperRating';
+import { RatingService, getPaperId } from '../services/ratingService';
 
 interface ProjectsPageProps {
   currentUser: User | null;
@@ -67,8 +70,8 @@ export const ProjectsPage: React.FC<ProjectsPageProps> = ({
 
   // Search Results & Active Tab
   const [activeSearchTab, setActiveSearchTab] = useState<'all' | 'projects' | 'scholarly' | 'papers'>('all');
-  const [studyDesignFilter, setStudyDesignFilter] = useState<string>('all');
   const [scholarlyResults, setScholarlyResults] = useState<ExternalScholarlyResult[]>([]);
+  const [paperStatsMap, setPaperStatsMap] = useState<Record<string, PaperStats>>({});
   const [loadingScholarly, setLoadingScholarly] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [expandedAbstracts, setExpandedAbstracts] = useState<Record<string, boolean>>({});
@@ -127,6 +130,30 @@ export const ProjectsPage: React.FC<ProjectsPageProps> = ({
 
     return () => clearTimeout(timer);
   }, [searchQuery]);
+
+  // Local matching papers
+  const matchedLocalPapers = useMemo(() => {
+    if (!searchQuery.trim()) return [];
+    const q = searchQuery.toLowerCase();
+    return allPapers.filter(p => 
+      p.title.toLowerCase().includes(q) ||
+      p.abstract.toLowerCase().includes(q) ||
+      p.authors.some(a => a.toLowerCase().includes(q)) ||
+      p.keywords.some(k => k.toLowerCase().includes(q))
+    );
+  }, [allPapers, searchQuery]);
+
+  // Batched retrieval of community ratings for scholarly literature and local repository papers
+  useEffect(() => {
+    const ids: string[] = [];
+    scholarlyResults.forEach(s => ids.push(getPaperId(s)));
+    matchedLocalPapers.forEach(p => ids.push(getPaperId(p)));
+    if (ids.length > 0) {
+      RatingService.batchGetPaperStats(ids).then(stats => {
+        setPaperStatsMap(prev => ({ ...prev, ...stats }));
+      });
+    }
+  }, [scholarlyResults, matchedLocalPapers]);
 
   // Recommendations mapping
   const recommendationsMap = useMemo(() => {
@@ -194,18 +221,6 @@ export const ProjectsPage: React.FC<ProjectsPageProps> = ({
       return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
     });
   }, [allProjects, searchQuery, selectedArea, selectedType, selectedSkills, selectedStatus, sortBy, currentUser, recommendationsMap]);
-
-  // Local matching papers
-  const matchedLocalPapers = useMemo(() => {
-    if (!searchQuery.trim()) return [];
-    const q = searchQuery.toLowerCase();
-    return allPapers.filter(p => 
-      p.title.toLowerCase().includes(q) ||
-      p.abstract.toLowerCase().includes(q) ||
-      p.authors.some(a => a.toLowerCase().includes(q)) ||
-      p.keywords.some(k => k.toLowerCase().includes(q))
-    );
-  }, [allPapers, searchQuery]);
 
   const copyCitation = (item: ExternalScholarlyResult) => {
     const { apa } = ExternalSearchService.generateCitation(item);
@@ -544,26 +559,36 @@ export const ProjectsPage: React.FC<ProjectsPageProps> = ({
                               </span>
                             ) : null}
 
-                            {/* Study Design Badge */}
-                            {s.studyDesign && (
-                              <span className="px-2 py-0.5 rounded-md text-[10px] font-black uppercase tracking-wide bg-[#F3E8FF] text-[#7E22CE] border border-[#E9D5FF]">
-                                {s.studyDesign}
-                              </span>
-                            )}
-
-                            {/* Sample Size Badge */}
-                            {s.sampleSize && (
-                              <span className="px-2 py-0.5 rounded-md text-[10px] font-bold text-gray-600 bg-gray-100 border border-gray-200">
-                                {s.sampleSize}
-                              </span>
-                            )}
                           </div>
 
-                          {s.doi && (
-                            <span className="text-[11px] font-mono text-gray-400 bg-gray-50 px-2 py-0.5 rounded border border-gray-200">
-                              DOI: {s.doi}
-                            </span>
-                          )}
+                          {/* Top Right: DOI and CollabX Community Rating */}
+                          <div className="flex items-center gap-2">
+                            {/* Authentic Registered DOI Badge */}
+                            {s.doi && (
+                              <a
+                                href={`https://doi.org/${s.doi}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                onClick={(e) => e.stopPropagation()}
+                                className="inline-flex items-center gap-1 text-[11px] font-mono font-bold text-[#1565E8] bg-[#EEF4FF] hover:bg-[#DBEAFE] px-2.5 py-0.5 rounded-md border border-[#BFDBFE] transition-colors"
+                                title={`Official registered DOI: ${s.doi}`}
+                              >
+                                <span>DOI: {s.doi}</span>
+                                <ExternalLink className="w-2.5 h-2.5 shrink-0" />
+                              </a>
+                            )}
+
+                            {/* CollabX Community Rating */}
+                            <PaperRating
+                              paper={s}
+                              stats={paperStatsMap[getPaperId(s)]}
+                              currentUser={currentUser}
+                              onAuthRequired={() => onNavigate('/login')}
+                              onRated={(newStats) => {
+                                setPaperStatsMap(prev => ({ ...prev, [newStats.paperId]: newStats }));
+                              }}
+                            />
+                          </div>
                         </div>
 
                         {/* Title */}
@@ -599,9 +624,7 @@ export const ProjectsPage: React.FC<ProjectsPageProps> = ({
                         </div>
 
                         {/* Authors */}
-                        <p className="text-[11px] text-gray-400">
-                          Authors: <span className="text-gray-700 font-semibold">{s.authors.join(', ')}</span>
-                        </p>
+                        <AuthorDisplay authors={s.authors} />
 
                         {/* Card Footer Actions */}
                         <div className="pt-2.5 border-t border-gray-100 flex flex-wrap items-center justify-between gap-2 text-xs">
@@ -820,14 +843,25 @@ export const ProjectsPage: React.FC<ProjectsPageProps> = ({
                   <div
                     key={p.id}
                     onClick={() => onNavigate(`/papers/${p.id}`)}
-                    className="bg-white p-4 rounded-2xl border border-[#E3EAF3] hover:border-[#0B6BE6] transition-all cursor-pointer flex items-start justify-between group shadow-2xs"
+                    className="bg-white p-4 rounded-2xl border border-[#E3EAF3] hover:border-[#0B6BE6] transition-all cursor-pointer flex items-start justify-between gap-4 group shadow-2xs"
                   >
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-[#EBF3FE] text-[#0B6BE6]">
-                          {p.paperType}
-                        </span>
-                        <span className="text-xs text-gray-400 font-semibold">{p.year}</span>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2">
+                          <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-[#EBF3FE] text-[#0B6BE6]">
+                            {p.paperType}
+                          </span>
+                          <span className="text-xs text-gray-400 font-semibold">{p.year}</span>
+                        </div>
+                        <PaperRating
+                          paper={p}
+                          stats={paperStatsMap[getPaperId(p)]}
+                          currentUser={currentUser}
+                          onAuthRequired={() => onNavigate('/login')}
+                          onRated={(newStats) => {
+                            setPaperStatsMap(prev => ({ ...prev, [newStats.paperId]: newStats }));
+                          }}
+                        />
                       </div>
                       <h4 className="font-bold text-sm text-[#0B2A55] group-hover:text-[#0B6BE6] transition-colors mt-1">
                         {p.title}

@@ -9,15 +9,33 @@ export default defineConfig(() => {
     base: './',
     build: {
       outDir: 'dist',
-      chunkSizeWarningLimit: 1600,
+      chunkSizeWarningLimit: 1000,
       rollupOptions: {
         output: {
           manualChunks(id) {
-            if (id.includes('node_modules/firebase/')) {
+            if (id.includes('node_modules/react/') || id.includes('node_modules/react-dom/') || id.includes('node_modules/react-router') || id.includes('node_modules/react-router-dom/')) {
+              return 'react-vendor';
+            }
+            if (id.includes('node_modules/firebase/') || id.includes('node_modules/@firebase/')) {
               return 'firebase-bundle';
+            }
+            if (id.includes('node_modules/jspdf/')) {
+              return 'jspdf-bundle';
+            }
+            if (id.includes('node_modules/html2canvas/') || id.includes('node_modules/dompurify/')) {
+              return 'html2canvas-bundle';
+            }
+            if (id.includes('node_modules/recharts/') || id.includes('node_modules/d3-') || id.includes('node_modules/victory-vendor/')) {
+              return 'charts-bundle';
+            }
+            if (id.includes('node_modules/motion/') || id.includes('node_modules/framer-motion/') || id.includes('node_modules/canvas-confetti/')) {
+              return 'animation-bundle';
             }
             if (id.includes('node_modules/lucide-react/')) {
               return 'icons-bundle';
+            }
+            if (id.includes('node_modules/@google/genai/')) {
+              return 'genai-bundle';
             }
           }
         }
