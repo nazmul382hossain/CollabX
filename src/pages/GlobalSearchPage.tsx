@@ -26,6 +26,7 @@ import { AuthorDisplay } from '../components/common/AuthorDisplay';
 import { PaperRating } from '../components/common/PaperRating';
 import { RatingService, getPaperId } from '../services/ratingService';
 import { useAuth } from '../contexts/AuthContext';
+import { PaperPdfModal } from '../components/common/PaperPdfModal';
 
 interface GlobalSearchPageProps {
   initialQuery?: string;
@@ -41,6 +42,7 @@ export const GlobalSearchPage: React.FC<GlobalSearchPageProps> = ({ initialQuery
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [citationFormat, setCitationFormat] = useState<'apa' | 'ieee' | 'harvard' | 'bibtex'>('apa');
   const [expandedAbstracts, setExpandedAbstracts] = useState<Record<string, boolean>>({});
+  const [previewExternalPaper, setPreviewExternalPaper] = useState<Partial<Paper> | null>(null);
 
   // Filters
   const [selectedDocType, setSelectedDocType] = useState<string>('all');
@@ -565,17 +567,27 @@ export const GlobalSearchPage: React.FC<GlobalSearchPageProps> = ({ initialQuery
                         </div>
 
                         {/* Right actions: Open Access PDF or Publisher View */}
-                        <div className="flex items-center gap-2">
+                        <div className="flex flex-wrap items-center gap-2">
                           {item.oaPdfUrl && (
-                            <a
-                              href={item.oaPdfUrl}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="px-4 py-2 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-700 font-extrabold flex items-center gap-1.5 transition-colors border border-emerald-200"
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setPreviewExternalPaper({
+                                  id: item.id,
+                                  title: item.title,
+                                  abstract: item.abstract,
+                                  authors: item.authors,
+                                  year: item.year,
+                                  doi: item.doi,
+                                  areaName: item.venue || item.source,
+                                  pdfUrl: item.oaPdfUrl
+                                })
+                              }
+                              className="px-4 py-2 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-700 font-extrabold flex items-center gap-1.5 transition-colors border border-emerald-200 cursor-pointer"
                             >
-                              <Download className="w-4 h-4" />
-                              <span>Open Access PDF</span>
-                            </a>
+                              <BookOpen className="w-4 h-4" />
+                              <span>Read PDF</span>
+                            </button>
                           )}
 
                           <a
@@ -724,6 +736,15 @@ export const GlobalSearchPage: React.FC<GlobalSearchPageProps> = ({ initialQuery
           </div>
         )}
 
+        {/* External Open-Access PDF Modal */}
+        {previewExternalPaper && (
+          <PaperPdfModal
+            paper={previewExternalPaper}
+            isOpen={!!previewExternalPaper}
+            onClose={() => setPreviewExternalPaper(null)}
+            allowGeneratePreview={false}
+          />
+        )}
       </div>
     </div>
   );

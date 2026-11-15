@@ -21,6 +21,7 @@ import { storage } from '../services/storage';
 import { messagingService } from '../services/messagingService';
 import { Avatar } from '../components/common/Avatar';
 import { publicProfileService } from '../services/publicProfileService';
+import { PdfCanvasViewer } from '../components/common/PdfCanvasViewer';
 
 interface ProjectDiscussionPageProps {
   projectId: string;
@@ -497,11 +498,12 @@ export const ProjectDiscussionPage: React.FC<ProjectDiscussionPageProps> = ({
                 <X className="w-5 h-5" />
               </button>
             </div>
-            <div className="flex-1 bg-gray-100 p-2">
-              <iframe
-                src={previewPdfUrl.url}
-                title="PDF Preview"
-                className="w-full h-full rounded-2xl border border-gray-200"
+            <div className="flex-1 min-h-0 flex flex-col">
+              <PdfCanvasViewer
+                source={previewPdfUrl.url}
+                title={previewPdfUrl.name}
+                fileName={previewPdfUrl.name}
+                heightClass="h-full"
               />
             </div>
           </div>

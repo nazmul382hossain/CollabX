@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { User } from '../../types';
 import { downloadAcademicCv, extractCvData } from '../../services/cvService';
+import { PdfCanvasViewer } from './PdfCanvasViewer';
 
 interface AcademicCvModalProps {
   isOpen: boolean;
@@ -111,10 +112,12 @@ export const AcademicCvModal: React.FC<AcademicCvModalProps> = ({
         <div className="flex-1 overflow-y-auto p-4 sm:p-8 bg-[#EBF0F7] flex justify-center">
           {isPdfDataUrl ? (
             <div className="w-full max-w-3xl h-[650px] bg-white rounded-2xl shadow-lg overflow-hidden border border-gray-200">
-              <iframe
-                src={fileData}
-                title="CV Document Preview"
-                className="w-full h-full"
+              <PdfCanvasViewer
+                source={fileData}
+                title={displayFileName}
+                fileName={displayFileName}
+                heightClass="h-full"
+                onDownloadRecorded={handleDownload}
               />
             </div>
           ) : (

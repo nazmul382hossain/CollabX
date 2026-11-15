@@ -22,6 +22,17 @@ import { storage } from '../services/storage';
 import { AiPaperWriterService } from '../services/aiPaperWriterService';
 import { ExternalSearchService } from '../services/externalSearchService';
 import { RESEARCH_AREAS } from '../data/seedData';
+import {
+  downloadPaperPdf,
+  generatePaperPdfBytes
+} from '../services/paperPdfService';
+import {
+  MAX_PDF_BASE64_BYTES,
+  sanitizePdfFileName,
+  uint8ArrayToBase64
+} from '../lib/pdfSource';
+import { buildArticleHtmlFromSections } from '../lib/articleHtml';
+import { formatFileSize } from '../services/cvService';
 
 interface AiWriterPageProps {
   currentUser: User | null;
@@ -91,28 +102,79 @@ export const AiWriterPage: React.FC<AiWriterPageProps> = ({ currentUser, onNavig
       return;
     }
 
-    const fullContent = Object.entries(sections).map(([title, content]) => `## ${title}\n\n${content}`).join('\n\n');
+    const fullContent = Object.entries(sections)
+      .map(([title, content]) => `## ${title}\n\n${content}`)
+      .join('\n\n');
+    const htmlContent = buildArticleHtmlFromSections(sections);
+    const authors = [currentUser.name, 'CollabX AI Assistant'];
+    const abstractText =
+      sections['Abstract'] || 'Empirical research paper drafted via CollabX AI Assistant.';
+    const cleanFileName = sanitizePdfFileName(topic);
 
-    storage.addPaper({
+    let pdfData: string | undefined;
+    let pdfFileSize: string | undefined;
+    try {
+      const pdfBytes = generatePaperPdfBytes({
+        title: topic,
+        abstract: abstractText,
+        paperType: 'Preprint',
+        areaName: researchArea,
+        year: new Date().getFullYear(),
+        authors,
+        keywords: [researchArea, 'AI Assisted', 'Empirical Study'],
+        content: fullContent
+      });
+      const base64 = uint8ArrayToBase64(pdfBytes);
+      if (base64.length <= MAX_PDF_BASE64_BYTES) {
+        pdfData = base64;
+        pdfFileSize = formatFileSize(pdfBytes.byteLength);
+      }
+    } catch (err) {
+      console.error('[AiWriterPage] Failed to attach jsPDF manuscript:', err);
+    }
+
+    const savedPaper = storage.addPaper({
       uploaderId: currentUser.id,
       uploaderName: currentUser.name,
       uploaderAvatar: currentUser.avatar,
       title: topic,
-      abstract: sections['Abstract'] || 'Empirical research paper drafted via CollabX AI Assistant.',
+      abstract: abstractText,
       paperType: 'Preprint',
       areaId: 'area-ai',
       areaName: researchArea,
       year: new Date().getFullYear(),
-      authors: [currentUser.name, 'CollabX AI Assistant'],
+      authors,
       keywords: [researchArea, 'AI Assisted', 'Empirical Study'],
+      pdfData,
+      pdfFileName: cleanFileName,
+      pdfFileSize,
+      content: fullContent,
+      htmlContent,
       visibility: 'public',
       aiAssisted: true
     });
 
-    setPublishedToast('Paper draft successfully published to CollabX Library with "AI-assisted draft" badge!');
+    setPublishedToast('Paper draft & PDF successfully published to CollabX Library! Opening manuscript...');
     setTimeout(() => {
-      onNavigate('/papers');
-    }, 2000);
+      onNavigate(`/papers/${savedPaper.id}`);
+    }, 1200);
+  };
+
+  const handleDownloadDraftPdf = async () => {
+    const fullContent = Object.entries(sections)
+      .map(([title, content]) => `## ${title}\n\n${content}`)
+      .join('\n\n');
+    await downloadPaperPdf({
+      title: topic,
+      abstract: sections['Abstract'] || 'Empirical research paper drafted via CollabX AI Assistant.',
+      paperType: 'Preprint',
+      areaName: researchArea,
+      year: new Date().getFullYear(),
+      authors: [currentUser?.name || 'Researcher', 'CollabX AI Assistant'],
+      keywords: [researchArea, 'AI Assisted', 'Empirical Study'],
+      content: fullContent,
+      pdfFileName: sanitizePdfFileName(topic)
+    });
   };
 
   const handleCopyMarkdown = () => {
@@ -334,7 +396,15 @@ export const AiWriterPage: React.FC<AiWriterPageProps> = ({ currentUser, onNavig
               <span className="text-gray-500 truncate max-w-sm">{topic}</span>
             </div>
 
-            <div className="flex items-center gap-3">
+            <div className="flex flex-wrap items-center gap-2.5">
+              <button
+                onClick={handleDownloadDraftPdf}
+                className="px-4 py-2 bg-[#0B6BE6] hover:bg-[#0956b8] text-white rounded-xl text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer"
+              >
+                <Download className="w-3.5 h-3.5" />
+                <span>Download PDF</span>
+              </button>
+
               <button
                 onClick={handleCopyMarkdown}
                 className="px-4 py-2 bg-[#F5F8FC] hover:bg-gray-200 border border-[#E3EAF3] rounded-xl text-xs font-bold text-gray-700 flex items-center gap-1.5 transition-colors cursor-pointer"

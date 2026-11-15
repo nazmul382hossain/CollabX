@@ -1,30 +1,29 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { 
   ArrowLeft, 
   Download, 
   Heart, 
   Share2, 
-  Copy, 
-  Check, 
   BookOpen, 
   FileText, 
-  Calendar, 
-  Users, 
   Sparkles, 
   MessageSquare, 
   Send,
   Maximize2,
-  ExternalLink
+  ExternalLink,
+  AlertCircle
 } from 'lucide-react';
 import { Paper, User, PaperComment, PaperStats } from '../types';
 import { storage } from '../services/storage';
 import { ExternalSearchService } from '../services/externalSearchService';
 import { Avatar } from '../components/common/Avatar';
-import { Badge } from '../components/common/Badge';
 import { PaperPdfModal } from '../components/common/PaperPdfModal';
-import { downloadPaperPdf, generatePaperPdf } from '../services/paperPdfService';
+import { PdfCanvasViewer } from '../components/common/PdfCanvasViewer';
+import { downloadPaperPdf, generatePaperPdfBlob } from '../services/paperPdfService';
 import { PaperRating } from '../components/common/PaperRating';
 import { RatingService, getPaperId } from '../services/ratingService';
+import { PdfInputSource, sanitizePdfFileName } from '../lib/pdfSource';
+import { markdownToRawHtml, sanitizeArticleHtml } from '../lib/articleHtml';
 
 interface PaperDetailsPageProps {
   paperId: string;
@@ -54,7 +53,32 @@ export const PaperDetailsPage: React.FC<PaperDetailsPageProps> = ({
   const [isLiked, setIsLiked] = useState(false);
   const [downloadSuccess, setDownloadSuccess] = useState(false);
   const [isPdfModalOpen, setIsPdfModalOpen] = useState(false);
-  const [readerViewMode, setReaderViewMode] = useState<'pdf' | 'transcript'>('pdf');
+
+  const attachedPdfSource: PdfInputSource | null = useMemo(() => {
+    if (!paper) return null;
+    if (paper.pdfData && paper.pdfData.trim()) return paper.pdfData;
+    if (paper.pdfUrl && paper.pdfUrl.trim()) return paper.pdfUrl;
+    return null;
+  }, [paper]);
+
+  const hasAttachedPdf = Boolean(attachedPdfSource);
+  const [generatedPreviewBlob, setGeneratedPreviewBlob] = useState<Blob | null>(null);
+  const [readerViewMode, setReaderViewMode] = useState<'pdf' | 'transcript'>(() =>
+    hasAttachedPdf ? 'pdf' : 'transcript'
+  );
+  const [noPdfBanner, setNoPdfBanner] = useState<boolean>(() => !hasAttachedPdf);
+
+  useEffect(() => {
+    setGeneratedPreviewBlob(null);
+    if (!hasAttachedPdf) {
+      setReaderViewMode('transcript');
+      setNoPdfBanner(true);
+    } else {
+      setReaderViewMode('pdf');
+      setNoPdfBanner(false);
+    }
+  }, [paperId, hasAttachedPdf]);
+
   const [comments, setComments] = useState<PaperComment[]>([
     {
       id: 'c-1',
@@ -68,17 +92,15 @@ export const PaperDetailsPage: React.FC<PaperDetailsPageProps> = ({
   ]);
   const [commentInput, setCommentInput] = useState('');
 
-  const pdfDocumentUri = useMemo(() => {
+  const sanitizedArticleHtml = useMemo(() => {
     if (!paper) return '';
-    if (paper.pdfData && paper.pdfData.startsWith('data:')) return paper.pdfData;
-    if (paper.pdfUrl && paper.pdfUrl.startsWith('data:')) return paper.pdfUrl;
-    if (paper.pdfUrl && paper.pdfUrl.startsWith('http')) return paper.pdfUrl;
-    try {
-      const doc = generatePaperPdf(paper);
-      return doc.output('datauristring');
-    } catch {
-      return '';
+    if (paper.htmlContent && paper.htmlContent.trim()) {
+      return sanitizeArticleHtml(paper.htmlContent);
     }
+    if (paper.content && paper.content.trim()) {
+      return sanitizeArticleHtml(markdownToRawHtml(paper.content));
+    }
+    return '';
   }, [paper]);
 
   if (!paper) {
@@ -110,11 +132,22 @@ export const PaperDetailsPage: React.FC<PaperDetailsPageProps> = ({
     }
   };
 
-  const handleDownload = () => {
+  const handleDownload = async () => {
     storage.incrementPaperDownload(paper.id);
-    downloadPaperPdf(paper);
+    await downloadPaperPdf(paper);
     setDownloadSuccess(true);
     setTimeout(() => setDownloadSuccess(false), 3000);
+  };
+
+  const handleGeneratePdfCopy = () => {
+    try {
+      const blob = generatePaperPdfBlob(paper);
+      setGeneratedPreviewBlob(blob);
+      setNoPdfBanner(false);
+      setReaderViewMode('pdf');
+    } catch (err) {
+      console.error('[PaperDetailsPage] Failed to generate jsPDF copy:', err);
+    }
   };
 
   const handleAddComment = (e: React.FormEvent) => {
@@ -241,7 +274,7 @@ export const PaperDetailsPage: React.FC<PaperDetailsPageProps> = ({
       {/* In-Browser PDF / Document Reader Preview */}
       <div className="bg-white rounded-3xl border border-[#E3EAF3] overflow-hidden shadow-xs">
         <div className="bg-[#0B2A55] text-white p-4 flex flex-wrap items-center justify-between gap-3 text-xs font-semibold">
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-3">
             <div className="flex items-center gap-2">
               <BookOpen className="w-4 h-4 text-[#FFC83D]" />
               <span className="font-bold">In-Browser Manuscript Reader</span>
@@ -271,19 +304,33 @@ export const PaperDetailsPage: React.FC<PaperDetailsPageProps> = ({
           </div>
 
           <div className="flex items-center gap-2">
+            {!hasAttachedPdf && !generatedPreviewBlob && (
+              <button
+                type="button"
+                onClick={handleGeneratePdfCopy}
+                className="px-3 py-1.5 bg-[#FFC83D] hover:bg-[#f5bc28] rounded-xl text-[#0B2A55] font-bold transition-colors flex items-center gap-1.5 cursor-pointer"
+                title="Generate printable PDF from article metadata"
+              >
+                <Sparkles className="w-3.5 h-3.5" />
+                <span>Generate PDF</span>
+              </button>
+            )}
+
             <button
+              type="button"
               onClick={() => setIsPdfModalOpen(true)}
               className="px-3 py-1.5 bg-white/15 hover:bg-white/25 rounded-xl text-white font-bold transition-colors flex items-center gap-1.5 cursor-pointer"
-              title="Open Fullscreen PDF Viewer"
+              title="Open PDF in Modal Reader"
             >
               <Maximize2 className="w-3.5 h-3.5" />
-              <span>Fullscreen PDF</span>
+              <span>Expand Reader</span>
             </button>
 
             <button
+              type="button"
               onClick={handleDownload}
               className="px-3 py-1.5 bg-[#0B6BE6] hover:bg-[#0956b8] rounded-xl text-white font-bold transition-colors flex items-center gap-1.5 cursor-pointer shadow-xs"
-              title="Download Attached PDF"
+              title={`Download ${sanitizePdfFileName(paper.title, paper.pdfFileName)}`}
             >
               <Download className="w-3.5 h-3.5" />
               <span>Download PDF</span>
@@ -293,56 +340,80 @@ export const PaperDetailsPage: React.FC<PaperDetailsPageProps> = ({
 
         {/* Reader Body */}
         {readerViewMode === 'pdf' ? (
-          <div className="w-full h-[650px] sm:h-[720px] bg-[#EBF0F7] p-2 sm:p-4 flex flex-col justify-center">
-            {pdfDocumentUri ? (
-              <iframe
-                src={pdfDocumentUri}
-                title={paper.title}
-                className="w-full h-full bg-white rounded-2xl shadow-md border border-gray-200"
-              />
-            ) : (
-              <div className="text-center p-8 space-y-3">
-                <FileText className="w-10 h-10 text-gray-400 mx-auto" />
-                <p className="text-gray-600 text-xs font-semibold">PDF preview not available inline</p>
+          <PdfCanvasViewer
+            source={generatedPreviewBlob || attachedPdfSource}
+            title={paper.title}
+            fileName={paper.pdfFileName}
+            externalUrl={paper.pdfUrl && /^https?:\/\//i.test(paper.pdfUrl) ? paper.pdfUrl : undefined}
+            onSwitchToArticleView={() => setReaderViewMode('transcript')}
+            onDownloadRecorded={() => storage.incrementPaperDownload(paper.id)}
+            emptyMessage="No PDF attached to this paper"
+          />
+        ) : (
+          /* Article View Tab: shows abstract, metadata, and DOMPurify-sanitized HTML for AI-generated papers */
+          <div className="p-6 sm:p-10 bg-[#F3F4F6] space-y-4">
+            {noPdfBanner && !hasAttachedPdf && !generatedPreviewBlob && (
+              <div className="max-w-3xl mx-auto px-4 py-3 rounded-2xl bg-[#FEF3C7] border border-[#FDE68A] text-[#92400E] text-xs font-semibold flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 shrink-0" />
+                  <span>No PDF attached to this paper — showing Article View instead.</span>
+                </div>
                 <button
-                  onClick={handleDownload}
-                  className="px-4 py-2 bg-[#0B6BE6] text-white rounded-xl text-xs font-bold"
+                  type="button"
+                  onClick={handleGeneratePdfCopy}
+                  className="px-3 py-1.5 rounded-xl bg-[#0B2A55] text-white text-[11px] font-bold hover:bg-[#133b75] cursor-pointer flex items-center gap-1"
                 >
-                  Download Manuscript PDF
+                  <FileText className="w-3.5 h-3.5" />
+                  <span>Generate PDF Preview</span>
                 </button>
               </div>
             )}
-          </div>
-        ) : (
-          /* Render simulated academic manuscript pages */
-          <div className="p-8 sm:p-12 bg-gray-50 flex justify-center">
-            <div className="max-w-2xl w-full bg-white p-8 sm:p-12 rounded-xl shadow-lg border border-gray-200 space-y-6 text-xs text-gray-800 leading-relaxed font-serif">
-              <div className="text-center space-y-2 border-b pb-4">
-                <h2 className="text-base font-bold text-gray-900 font-sans">{paper.title}</h2>
-                <p className="text-[11px] text-gray-600 italic font-sans">{paper.authors.join(', ')}</p>
-                <p className="text-[10px] text-gray-500 font-sans">Department of Computer Science and Engineering, Port City International University</p>
-              </div>
 
-              <div>
-                <h3 className="font-bold text-gray-900 uppercase tracking-wider text-[11px] mb-1 font-sans">I. Introduction</h3>
-                <p className="indent-4">
-                  Rapid advancements in {paper.areaName} have unlocked unprecedented capabilities across scientific and medical domains. However, translating these theoretical insights into reliable production systems poses foundational challenges in latency, sample efficiency, and interpretability.
+            <div className="max-w-3xl mx-auto w-full bg-white p-6 sm:p-12 rounded-2xl shadow-md border border-gray-200 space-y-6 text-sm text-gray-800 leading-relaxed">
+              <div className="text-center space-y-2 border-b border-gray-200 pb-5">
+                <span className="inline-block px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-[#DCE6FB] text-[#0B6BE6] uppercase tracking-wider">
+                  {paper.paperType} • {paper.year}
+                </span>
+                <h2 className="text-xl sm:text-2xl font-extrabold text-[#0B2A55] leading-snug">
+                  {paper.title}
+                </h2>
+                <p className="text-xs text-gray-600 font-medium">
+                  {paper.authors.join(', ')}
+                </p>
+                <p className="text-[11px] text-gray-500">
+                  {paper.areaName} • Port City International University Repository
                 </p>
               </div>
 
-              <div>
-                <h3 className="font-bold text-gray-900 uppercase tracking-wider text-[11px] mb-1 font-sans">II. Methodology & System Architecture</h3>
-                <p className="indent-4">
-                  We formulate a cross-attention representation network trained under regularized loss parameters. The empirical evaluation incorporates multi-center cohorts with rigorous statistical validation.
+              <div className="bg-[#F5F8FC] border border-[#E3EAF3] rounded-2xl p-4 sm:p-5 space-y-1.5">
+                <h3 className="font-bold text-[#0B2A55] uppercase tracking-wider text-xs">
+                  Abstract
+                </h3>
+                <p className="text-xs sm:text-sm text-gray-700 leading-relaxed">
+                  {paper.abstract}
                 </p>
               </div>
 
-              <div className="p-4 bg-gray-50 border rounded text-center text-gray-500 italic text-[11px]">
-                [Figure 1: High-level architectural pipeline showing multimodal attention weighting and feature extraction maps]
-              </div>
+              {sanitizedArticleHtml ? (
+                <div
+                  className="space-y-4 text-xs sm:text-sm text-gray-800 leading-relaxed [&_h2]:text-base [&_h2]:font-extrabold [&_h2]:text-[#0B2A55] [&_h2]:pt-3 [&_h2]:border-b [&_h2]:border-gray-100 [&_h2]:pb-1.5 [&_h3]:text-sm [&_h3]:font-bold [&_h3]:text-[#1E3A8A] [&_h3]:pt-2 [&_ul]:list-disc [&_ul]:pl-5 [&_ul]:space-y-1 [&_p]:leading-relaxed"
+                  dangerouslySetInnerHTML={{ __html: sanitizedArticleHtml }}
+                />
+              ) : (
+                <div className="space-y-4 text-xs sm:text-sm text-gray-700 leading-relaxed">
+                  <div>
+                    <h3 className="font-bold text-[#0B2A55] uppercase tracking-wider text-xs mb-1.5">
+                      Manuscript Summary
+                    </h3>
+                    <p>
+                      This {paper.paperType.toLowerCase()} in <strong>{paper.areaName}</strong> was authored by {paper.authors.join(', ')} ({paper.year}). Key research focus areas include {paper.keywords.join(', ')}.
+                    </p>
+                  </div>
+                </div>
+              )}
 
-              <div className="pt-4 text-center text-[10px] text-gray-400 font-sans">
-                — End of Article Preview —
+              <div className="pt-4 border-t border-gray-100 text-center text-[11px] text-gray-400">
+                — End of Article View —
               </div>
             </div>
           </div>
@@ -445,9 +516,10 @@ export const PaperDetailsPage: React.FC<PaperDetailsPageProps> = ({
       {/* Fullscreen Paper PDF Modal */}
       {isPdfModalOpen && (
         <PaperPdfModal
-          paper={paper}
+          paper={generatedPreviewBlob ? { ...paper, pdfData: undefined, pdfUrl: undefined } : paper}
           isOpen={isPdfModalOpen}
           onClose={() => setIsPdfModalOpen(false)}
+          onSwitchToArticleView={() => setReaderViewMode('transcript')}
         />
       )}
     </div>

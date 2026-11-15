@@ -251,6 +251,8 @@ export interface Paper {
   pdfFileName?: string;
   pdfFileSize?: string;
   pdfData?: string;
+  content?: string;
+  htmlContent?: string;
   coverImage?: string;
   visibility: PaperVisibility;
   aiAssisted?: boolean;

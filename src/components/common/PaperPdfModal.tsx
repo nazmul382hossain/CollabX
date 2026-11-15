@@ -1,52 +1,46 @@
-import React from 'react';
-import { X, Download, ExternalLink, FileText, BookOpen } from 'lucide-react';
+import React, { useState, useMemo } from 'react';
+import { X, FileText, Sparkles } from 'lucide-react';
 import { Paper } from '../../types';
-import { downloadPaperPdf, generatePaperPdf } from '../../services/paperPdfService';
+import { generatePaperPdfBlob } from '../../services/paperPdfService';
+import { PdfCanvasViewer } from './PdfCanvasViewer';
+import { PdfInputSource, sanitizePdfFileName } from '../../lib/pdfSource';
 
 interface PaperPdfModalProps {
   paper: Partial<Paper>;
   isOpen: boolean;
   onClose: () => void;
+  onSwitchToArticleView?: () => void;
+  allowGeneratePreview?: boolean;
 }
 
-export const PaperPdfModal: React.FC<PaperPdfModalProps> = ({ paper, isOpen, onClose }) => {
+export const PaperPdfModal: React.FC<PaperPdfModalProps> = ({
+  paper,
+  isOpen,
+  onClose,
+  onSwitchToArticleView,
+  allowGeneratePreview = true
+}) => {
+  const [generatedBlob, setGeneratedBlob] = useState<Blob | null>(null);
+
+  const attachedSource: PdfInputSource | null = useMemo(() => {
+    if (generatedBlob) return generatedBlob;
+    if (paper.pdfData && paper.pdfData.trim()) return paper.pdfData;
+    if (paper.pdfUrl && paper.pdfUrl.trim()) return paper.pdfUrl;
+    return null;
+  }, [paper.pdfData, paper.pdfUrl, generatedBlob]);
+
   if (!isOpen) return null;
 
-  const pdfSource = React.useMemo(() => {
-    if (paper.pdfData && paper.pdfData.startsWith('data:')) {
-      return paper.pdfData;
-    }
-    if (paper.pdfUrl && paper.pdfUrl.startsWith('data:')) {
-      return paper.pdfUrl;
-    }
-    if (paper.pdfUrl && paper.pdfUrl.startsWith('http')) {
-      return paper.pdfUrl;
-    }
-    // Generate data uri string from paper
+  const displayFileName = sanitizePdfFileName(paper.title, paper.pdfFileName);
+
+  const handleGeneratePreview = () => {
     try {
-      const doc = generatePaperPdf(paper);
-      return doc.output('datauristring');
-    } catch {
-      return '';
-    }
-  }, [paper]);
-
-  const handleDownload = () => {
-    downloadPaperPdf(paper as Paper);
-  };
-
-  const handleOpenNewTab = () => {
-    if (pdfSource) {
-      const win = window.open('', '_blank');
-      if (win) {
-        win.document.write(
-          `<html><head><title>${paper.title || 'Paper PDF'}</title></head><body style="margin:0;"><iframe src="${pdfSource}" style="width:100%;height:100%;border:none;"></iframe></body></html>`
-        );
-      }
+      const blob = generatePaperPdfBlob(paper);
+      setGeneratedBlob(blob);
+    } catch (err) {
+      console.error('[PaperPdfModal] Failed to generate jsPDF blob:', err);
     }
   };
-
-  const displayFileName = paper.pdfFileName || `${(paper.title || 'Academic_Paper').replace(/[^a-zA-Z0-9_-]/g, '_')}_Manuscript.pdf`;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-xs p-2 sm:p-4 animate-fade-in">
@@ -68,23 +62,14 @@ export const PaperPdfModal: React.FC<PaperPdfModalProps> = ({ paper, isOpen, onC
           </div>
 
           <div className="flex items-center gap-2 shrink-0">
-            <button
-              onClick={handleDownload}
-              className="px-3.5 py-1.5 rounded-xl bg-[#0B6BE6] hover:bg-[#0956b8] text-white text-xs font-bold flex items-center gap-1.5 transition-all shadow-xs cursor-pointer"
-              title="Download PDF File"
-            >
-              <Download className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">Download PDF</span>
-            </button>
-
-            {pdfSource.startsWith('data:') && (
+            {!attachedSource && allowGeneratePreview && (
               <button
-                onClick={handleOpenNewTab}
-                className="px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-white text-xs font-semibold flex items-center gap-1 transition-colors cursor-pointer"
-                title="Open in new window"
+                type="button"
+                onClick={handleGeneratePreview}
+                className="px-3 py-1.5 rounded-xl bg-[#FFC83D] hover:bg-[#f5bc28] text-[#0B2A55] text-xs font-bold flex items-center gap-1.5 cursor-pointer"
               >
-                <ExternalLink className="w-3.5 h-3.5" />
-                <span className="hidden md:inline">Open in Tab</span>
+                <Sparkles className="w-3.5 h-3.5" />
+                <span>Generate PDF Preview</span>
               </button>
             )}
 
@@ -98,31 +83,23 @@ export const PaperPdfModal: React.FC<PaperPdfModalProps> = ({ paper, isOpen, onC
           </div>
         </div>
 
-        {/* PDF Viewer Body */}
-        <div className="flex-1 bg-[#EBF0F7] p-2 sm:p-4 overflow-hidden flex flex-col">
-          {pdfSource ? (
-            <div className="w-full h-full bg-white rounded-2xl shadow-md overflow-hidden border border-gray-200">
-              <iframe
-                src={pdfSource}
-                title={paper.title || 'PDF Document Viewer'}
-                className="w-full h-full border-0"
-              />
-            </div>
-          ) : (
-            <div className="w-full h-full bg-white rounded-2xl flex flex-col items-center justify-center p-8 text-center space-y-4">
-              <BookOpen className="w-12 h-12 text-gray-400" />
-              <h4 className="font-bold text-gray-700">Unable to preview document</h4>
-              <p className="text-xs text-gray-500 max-w-sm">
-                The attached manuscript cannot be displayed inline. You can download the PDF to view it on your device.
-              </p>
-              <button
-                onClick={handleDownload}
-                className="px-4 py-2 bg-[#0B6BE6] text-white text-xs font-bold rounded-xl"
-              >
-                Download PDF File
-              </button>
-            </div>
-          )}
+        {/* PDF.js Canvas Viewer Body */}
+        <div className="flex-1 min-h-0 flex flex-col">
+          <PdfCanvasViewer
+            source={attachedSource}
+            title={paper.title}
+            fileName={displayFileName}
+            externalUrl={paper.pdfUrl && /^https?:\/\//i.test(paper.pdfUrl) ? paper.pdfUrl : undefined}
+            heightClass="h-full"
+            onSwitchToArticleView={
+              onSwitchToArticleView
+                ? () => {
+                    onClose();
+                    onSwitchToArticleView();
+                  }
+                : undefined
+            }
+          />
         </div>
       </div>
     </div>

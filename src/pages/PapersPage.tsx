@@ -26,10 +26,15 @@ import { ExternalSearchService } from '../services/externalSearchService';
 import { Avatar } from '../components/common/Avatar';
 import { Badge } from '../components/common/Badge';
 import { PaperPdfModal } from '../components/common/PaperPdfModal';
-import { generateSamplePaperPdfDataUrl, downloadPaperPdf } from '../services/paperPdfService';
+import { generateSamplePaperPdfBase64 } from '../services/paperPdfService';
 import { formatFileSize } from '../services/cvService';
 import { PaperRating } from '../components/common/PaperRating';
 import { RatingService, getPaperId } from '../services/ratingService';
+import {
+  MAX_PDF_BASE64_BYTES,
+  sanitizePdfFileName,
+  uint8ArrayToBase64
+} from '../lib/pdfSource';
 
 interface PapersPageProps {
   currentUser: User | null;
@@ -120,26 +125,36 @@ export const PapersPage: React.FC<PapersPageProps> = ({ currentUser, onNavigate 
       setPdfError('Only PDF files (.pdf) are allowed. Please select a valid research manuscript PDF.');
       return;
     }
-    if (file.size > 25 * 1024 * 1024) {
-      setPdfError('File size exceeds the 25MB limit. Please attach a compressed PDF file.');
+    // Quick raw size check before reading (base64 expands by ~4/3)
+    const estimatedBase64Size = Math.ceil((file.size * 4) / 3);
+    if (estimatedBase64Size > MAX_PDF_BASE64_BYTES) {
+      setPdfError('PDF too large for the current storage (max ~700 KB). Please compress it');
       return;
     }
 
     const reader = new FileReader();
     reader.onload = () => {
-      const dataUrl = reader.result as string;
+      const buf = reader.result as ArrayBuffer;
+      const bytes = new Uint8Array(buf);
+      const base64 = uint8ArrayToBase64(bytes);
+
+      if (base64.length > MAX_PDF_BASE64_BYTES) {
+        setPdfError('PDF too large for the current storage (max ~700 KB). Please compress it');
+        return;
+      }
+
       setAttachedPdf({
         file,
-        name: file.name,
+        name: sanitizePdfFileName(newTitle, file.name),
         size: formatFileSize(file.size),
-        data: dataUrl
+        data: base64
       });
       setPdfError(null);
     };
     reader.onerror = () => {
       setPdfError('Failed to read the selected PDF file. Please try again.');
     };
-    reader.readAsDataURL(file);
+    reader.readAsArrayBuffer(file);
   };
 
   const handleFileInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -157,15 +172,26 @@ export const PapersPage: React.FC<PapersPageProps> = ({ currentUser, onNavigate 
     setPdfError(null);
     try {
       const title = newTitle.trim() || 'Deep Residual Learning for Signal Detection';
-      const authors = newAuthors.trim() 
-        ? newAuthors.split(',').map(s => s.trim()) 
+      const authors = newAuthors.trim()
+        ? newAuthors.split(',').map(s => s.trim())
         : [currentUser?.name || 'Lead Author', 'Faculty Mentor'];
-      const dataUrl = generateSamplePaperPdfDataUrl(title, authors);
-      const safeName = `${title.replace(/[^a-zA-Z0-9_-]/g, '_')}_Manuscript.pdf`;
+      const base64 = generateSamplePaperPdfBase64(title, authors, {
+        abstract: newAbstract.trim() || undefined,
+        paperType: newPaperType,
+        areaName: newArea
+      });
+
+      if (base64.length > MAX_PDF_BASE64_BYTES) {
+        setPdfError('PDF too large for the current storage (max ~700 KB). Please compress it');
+        return;
+      }
+
+      const safeName = sanitizePdfFileName(title);
+      const byteEstimate = Math.floor((base64.length * 3) / 4);
       setAttachedPdf({
         name: safeName,
-        size: '1.4 MB',
-        data: dataUrl
+        size: formatFileSize(byteEstimate),
+        data: base64
       });
     } catch {
       setPdfError('Could not generate sample PDF. Please choose a local file.');
@@ -181,19 +207,13 @@ export const PapersPage: React.FC<PapersPageProps> = ({ currentUser, onNavigate 
       return;
     }
 
+    if (attachedPdf && attachedPdf.data.length > MAX_PDF_BASE64_BYTES) {
+      setPdfError('PDF too large for the current storage (max ~700 KB). Please compress it');
+      return;
+    }
+
     const authorsList = newAuthors.trim() ? newAuthors.split(',').map(s => s.trim()) : [currentUser.name];
     const keywordsList = newKeywords.trim() ? newKeywords.split(',').map(s => s.trim()) : ['Research'];
-
-    // If no custom PDF was attached by user, auto-generate official PDF so paper always has an attached document
-    let finalPdfData = attachedPdf?.data;
-    let finalPdfName = attachedPdf?.name;
-    let finalPdfSize = attachedPdf?.size;
-
-    if (!finalPdfData) {
-      finalPdfData = generateSamplePaperPdfDataUrl(newTitle.trim(), authorsList);
-      finalPdfName = `${newTitle.trim().replace(/[^a-zA-Z0-9_-]/g, '_')}_Manuscript.pdf`;
-      finalPdfSize = '1.4 MB';
-    }
 
     storage.addPaper({
       uploaderId: currentUser.id,
@@ -208,10 +228,9 @@ export const PapersPage: React.FC<PapersPageProps> = ({ currentUser, onNavigate 
       doi: newDoi.trim() || undefined,
       authors: authorsList,
       keywords: keywordsList,
-      pdfUrl: finalPdfData,
-      pdfFileName: finalPdfName,
-      pdfFileSize: finalPdfSize,
-      pdfData: finalPdfData,
+      pdfFileName: attachedPdf?.name,
+      pdfFileSize: attachedPdf?.size,
+      pdfData: attachedPdf?.data,
       visibility: 'public',
       aiAssisted: false
     });
@@ -489,7 +508,7 @@ export const PapersPage: React.FC<PapersPageProps> = ({ currentUser, onNavigate 
               <div className="space-y-2 pt-1">
                 <div className="flex items-center justify-between">
                   <label className="font-bold text-gray-700 block">
-                    Attach PDF File <span className="text-gray-400 font-normal">(Max 25MB)</span>
+                    Attach PDF File <span className="text-gray-400 font-normal">(Max ~700 KB encoded / ~510 KB PDF)</span>
                   </label>
                   {!attachedPdf && (
                     <button
@@ -620,14 +639,14 @@ export const PapersPage: React.FC<PapersPageProps> = ({ currentUser, onNavigate 
                     </div>
                     <div>
                       <span className="font-bold text-gray-800 block text-xs">
-                        Attach PDF File (Max 25MB)
+                        Attach PDF File (Max ~700 KB encoded / ~510 KB file)
                       </span>
                       <span className="text-[11px] text-gray-500">
                         Drag & drop your manuscript PDF here, or <span className="text-[#0B6BE6] font-semibold underline">browse files</span>
                       </span>
                     </div>
                     <span className="text-[10px] text-gray-400">
-                      Standard research paper format (.pdf)
+                      Standard research paper format (.pdf) • Optional (compress larger PDFs first)
                     </span>
                   </div>
                 )}
