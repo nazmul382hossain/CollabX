@@ -57,7 +57,12 @@ class PublicProfileService {
         const storedList: PublicProfile[] = JSON.parse(raw);
         for (const item of storedList) {
           if (item && item.id) {
-            this.cache.set(item.id, sanitizeToPublicProfile(item));
+            const seedMatch = SEED_USERS.find(su => su.id === item.id);
+            if (seedMatch && (!item.avatar || item.avatar.includes('picsum.photos'))) {
+              this.cache.set(item.id, sanitizeToPublicProfile({ ...item, avatar: seedMatch.avatar, photoURL: seedMatch.avatar }));
+            } else {
+              this.cache.set(item.id, sanitizeToPublicProfile(item));
+            }
           }
         }
       }

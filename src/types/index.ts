@@ -374,3 +374,21 @@ export interface ActivityLog {
   entityTitle: string;
   createdAt: string;
 }
+
+export interface MentorFeedback {
+  id: string; // `${projectId}_${authorId}`
+  projectId: string;
+  projectTitle: string;
+  mentorId: string;
+  mentorName: string;
+  authorId: string;
+  authorName: string;
+  authorAvatar: string;
+  authorRole: UserRole;
+  authorDepartment?: string;
+  rating: number; // 1-5
+  tags: string[];
+  comment: string;
+  createdAt: string;
+  updatedAt: string;
+}

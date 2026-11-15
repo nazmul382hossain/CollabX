@@ -348,6 +348,27 @@ service cloud.firestore {
       allow read: if true;
       allow write: if isSignedIn();
     }
+
+    // =========================================================================
+    // 9. MENTOR / SUPERVISOR FEEDBACK COLLECTION
+    // - Document ID: ${projectId}_${authorId}
+    // - Read: Everyone (transparent mentorship quality)
+    // - Create/Update: Collaborator (authorId == request.auth.uid) rating 1..5
+    // =========================================================================
+    match /mentorFeedback/{feedbackId} {
+      allow read: if true;
+
+      allow create, update: if isSignedIn() &&
+        request.resource.data.authorId == request.auth.uid &&
+        request.resource.data.mentorId != request.auth.uid &&
+        request.resource.data.rating is int &&
+        request.resource.data.rating >= 1 &&
+        request.resource.data.rating <= 5;
+
+      allow delete: if isSignedIn() && (
+        resource.data.authorId == request.auth.uid || isAdmin()
+      );
+    }
   }
 }
 

@@ -45,20 +45,19 @@ export const ASSETS = {
   },
 
   // Avatars (Characters & Faculty)
-  // Swappable placeholders using seed format per prompt: https://picsum.photos/seed/<name>/200
   avatars: {
-    ash: 'https://picsum.photos/seed/ash/200', // Ash Ketchum (red cap)
-    misty: 'https://picsum.photos/seed/misty/200', // Misty Williams
-    brock: 'https://picsum.photos/seed/brock/200', // Brock Harrison
-    gary: 'https://picsum.photos/seed/gary/200', // Gary Oak
-    drFahim: 'https://picsum.photos/seed/drfahim/200', // Dr. Fahim Rahman
-    drSarhan: 'https://picsum.photos/seed/drsarhan/200', // Dr. Sarhan
-    drNazmul: 'https://picsum.photos/seed/drnazmul/200', // Dr. Nazmul Hossain
-    drSabbir: 'https://picsum.photos/seed/drsabbir/200', // Dr. Sabbir Islam
-    drMIslam: 'https://picsum.photos/seed/drmislam/200', // Dr. M. Islam
-    admin: 'https://picsum.photos/seed/admin/200',
-    pikachu: 'https://picsum.photos/seed/pikachu/200',
-    eevee: 'https://picsum.photos/seed/eevee/200'
+    ash: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=200&auto=format&fit=crop&q=80',
+    misty: 'https://images.unsplash.com/photo-1517841905240-472988babdf9?w=200&auto=format&fit=crop&q=80',
+    brock: 'https://images.unsplash.com/photo-1522075469751-3a6694fb2f61?w=200&auto=format&fit=crop&q=80',
+    gary: 'https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?w=200&auto=format&fit=crop&q=80',
+    drFahim: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=200&auto=format&fit=crop&q=80',
+    drSarhan: 'https://images.unsplash.com/photo-1560250097-0b93528c311a?w=200&auto=format&fit=crop&q=80',
+    drNazmul: 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=200&auto=format&fit=crop&q=80',
+    drSabbir: 'https://images.unsplash.com/photo-1519085360753-af0119f7cbe7?w=200&auto=format&fit=crop&q=80',
+    drMIslam: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=200&auto=format&fit=crop&q=80',
+    admin: 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=200&auto=format&fit=crop&q=80',
+    pikachu: 'https://images.unsplash.com/photo-1580489944761-15a19d654956?w=200&auto=format&fit=crop&q=80',
+    eevee: 'https://images.unsplash.com/photo-1517841905240-472988babdf9?w=200&auto=format&fit=crop&q=80'
   },
 
   // Project Thumbnails

@@ -14,14 +14,18 @@ import {
   X, 
   Camera, 
   ExternalLink,
-  Sparkles
+  Sparkles,
+  Star,
+  MessageSquare
 } from 'lucide-react';
-import { User, Project, Paper, PublicProfile } from '../types';
+import { User, Project, Paper, PublicProfile, MentorFeedback } from '../types';
 import { storage } from '../services/storage';
 import { ImageCropModal } from '../components/common/ImageCropModal';
 import { RESEARCH_AREAS } from '../data/seedData';
 import { CvAttachmentField, CvAttachmentData } from '../components/common/CvAttachmentField';
 import { publicProfileService } from '../services/publicProfileService';
+import { feedbackService } from '../services/feedbackService';
+import { Avatar } from '../components/common/Avatar';
 
 interface ProfilePageProps {
   currentUser: User;
@@ -36,10 +40,29 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
 }) => {
   const isOwnProfile = !profileUserId || profileUserId === currentUser.id;
   
-  // When viewing OTHER user, read strictly from publicProfiles collection (never from users)
-  const [otherPublicProfile, setOtherPublicProfile] = useState<PublicProfile | null>(
-    !isOwnProfile && profileUserId ? (publicProfileService.getPublicProfileById(profileUserId) || null) : null
-  );
+  // When viewing OTHER user, check publicProfiles first, then local storage seed/registered user fallback
+  const [otherPublicProfile, setOtherPublicProfile] = useState<PublicProfile | null>(() => {
+    if (isOwnProfile || !profileUserId) return null;
+    const pub = publicProfileService.getPublicProfileById(profileUserId);
+    if (pub) return pub;
+    const localUser = storage.getUser(profileUserId);
+    if (localUser) {
+      return {
+        id: localUser.id,
+        name: localUser.name,
+        avatar: localUser.avatar,
+        headline: localUser.headline || '',
+        department: localUser.department || '',
+        institution: localUser.institution || 'Port City International University',
+        role: localUser.role,
+        interests: localUser.interests || [],
+        skills: localUser.skills || [],
+        bio: localUser.bio || '',
+        links: localUser.links || {}
+      };
+    }
+    return null;
+  });
 
   useEffect(() => {
     if (!isOwnProfile && profileUserId) {
@@ -68,6 +91,33 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
     bio: '',
     links: {}
   });
+
+  const [avatarImgError, setAvatarImgError] = useState(false);
+  useEffect(() => {
+    setAvatarImgError(false);
+  }, [activeUser.avatar]);
+
+  const [mentorFeedbacks, setMentorFeedbacks] = useState<MentorFeedback[]>([]);
+  useEffect(() => {
+    if (activeUser.role !== 'supervisor' && activeUser.role !== 'researcher') {
+      setMentorFeedbacks([]);
+      return;
+    }
+    let active = true;
+    setMentorFeedbacks(feedbackService.getCachedFeedbackForMentor(activeUser.id));
+    feedbackService.fetchFeedbackForMentor(activeUser.id).then(list => {
+      if (active) setMentorFeedbacks(list);
+    });
+    const unsub = feedbackService.subscribe(() => {
+      if (active) setMentorFeedbacks(feedbackService.getCachedFeedbackForMentor(activeUser.id));
+    });
+    return () => {
+      active = false;
+      unsub();
+    };
+  }, [activeUser.id, activeUser.role]);
+
+  const mentorFeedbackSummary = feedbackService.computeSummary(mentorFeedbacks);
 
   const [editModalOpen, setEditModalOpen] = useState(false);
   const [photoCropOpen, setPhotoCropOpen] = useState(false);
@@ -175,14 +225,27 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
       {/* Header Profile Card matching Screenshot 11 */}
       <div className="bg-white rounded-3xl border border-[#E3EAF3] p-6 sm:p-10 shadow-xs relative overflow-hidden">
         <div className="flex flex-col sm:flex-row items-center sm:items-start gap-6 sm:gap-8">
-          {/* 116px Big Round Avatar with Photo Picker Button */}
+          {/* 116px Big Round Avatar with Photo Picker Button & graceful fallback */}
           <div className="relative group shrink-0">
-            <div className="w-28 h-28 sm:w-32 sm:h-32 rounded-full overflow-hidden border-4 border-[#0B6BE6]/20 shadow-md">
-              <img
-                src={user.avatar}
-                alt={user.name}
-                className="w-full h-full object-cover"
-              />
+            <div className="w-28 h-28 sm:w-32 sm:h-32 rounded-full overflow-hidden border-4 border-[#0B6BE6]/20 shadow-md bg-[#DCE6FB] flex items-center justify-center">
+              {user.avatar && !avatarImgError ? (
+                <img
+                  src={user.avatar}
+                  alt={user.name}
+                  onError={() => setAvatarImgError(true)}
+                  className="w-full h-full object-cover"
+                />
+              ) : (
+                <span className="text-3xl font-extrabold text-[#0B6BE6] select-none">
+                  {user.name
+                    .trim()
+                    .split(' ')
+                    .slice(0, 2)
+                    .map(p => p[0] || '')
+                    .join('')
+                    .toUpperCase()}
+                </span>
+              )}
             </div>
             {isOwnProfile && (
               <button
@@ -224,6 +287,16 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
                 <MapPin className="w-4 h-4 text-[#E53935]" />
                 <span>{user.institution}</span>
               </div>
+              {(user.role === 'supervisor' || user.role === 'researcher') && (
+                <div className="flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-[#FEF3C7]/70 text-[#B45309] font-bold">
+                  <Star className="w-3.5 h-3.5 fill-[#F59E0B] text-[#F59E0B]" />
+                  <span>
+                    {mentorFeedbackSummary.count > 0
+                      ? `${mentorFeedbackSummary.average.toFixed(1)} (${mentorFeedbackSummary.count} collaborator feedback)`
+                      : 'No collaborator feedback yet'}
+                  </span>
+                </div>
+              )}
             </div>
 
             {/* Social Links */}
@@ -275,6 +348,86 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
               {user.bio || 'No biography written yet.'}
             </p>
           </div>
+
+          {/* Collaborator & Mentorship Feedback (for Supervisors & Researchers) */}
+          {(user.role === 'supervisor' || user.role === 'researcher') && (
+            <div className="bg-white rounded-3xl border border-[#E3EAF3] p-6 space-y-4 shadow-xs">
+              <div className="flex items-center justify-between border-b border-gray-100 pb-3">
+                <h3 className="font-bold text-base text-[#0B2A55] flex items-center gap-2">
+                  <MessageSquare className="w-4 h-4 text-[#0B6BE6]" />
+                  Collaborator & Mentorship Feedback ({mentorFeedbacks.length})
+                </h3>
+                {mentorFeedbackSummary.count > 0 && (
+                  <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-[#FEF3C7]/70 text-[#B45309] text-xs font-bold">
+                    <Star className="w-3.5 h-3.5 fill-[#F59E0B] text-[#F59E0B]" />
+                    {mentorFeedbackSummary.average.toFixed(1)} avg
+                  </span>
+                )}
+              </div>
+
+              {mentorFeedbacks.length > 0 ? (
+                <div className="space-y-3">
+                  {mentorFeedbacks.map(fb => {
+                    const authorProf = publicProfileService.getPublicProfileById(fb.authorId);
+                    const authorUser = storage.getUser(fb.authorId);
+                    const aAvatar = authorProf?.avatar || authorUser?.avatar || fb.authorAvatar;
+                    const aName = authorProf?.name || authorUser?.name || fb.authorName;
+                    return (
+                      <div
+                        key={fb.id}
+                        className="p-4 rounded-2xl border border-[#E3EAF3] bg-[#F5F8FC] space-y-2"
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-2.5">
+                            <Avatar src={aAvatar} name={aName} size="sm" />
+                            <div>
+                              <span className="font-bold text-xs text-[#0B2A55] block">{aName}</span>
+                              <button
+                                type="button"
+                                onClick={() => onNavigate(`/projects/${fb.projectId}`)}
+                                className="text-[11px] font-semibold text-[#0B6BE6] hover:underline text-left cursor-pointer"
+                              >
+                                {fb.projectTitle}
+                              </button>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-0.5">
+                            {[1, 2, 3, 4, 5].map(star => (
+                              <Star
+                                key={star}
+                                className={`w-3.5 h-3.5 ${
+                                  star <= fb.rating ? 'fill-[#F59E0B] text-[#F59E0B]' : 'text-gray-300'
+                                }`}
+                              />
+                            ))}
+                          </div>
+                        </div>
+
+                        {fb.tags && fb.tags.length > 0 && (
+                          <div className="flex flex-wrap gap-1.5">
+                            {fb.tags.map(tag => (
+                              <span
+                                key={tag}
+                                className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-white border border-[#E3EAF3] text-[#0B2A55]"
+                              >
+                                {tag}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+
+                        <p className="text-xs text-gray-700 leading-relaxed">{fb.comment}</p>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <p className="text-xs text-gray-400 py-2">
+                  No collaborator feedback submitted yet. Team members can leave feedback from the project Feedback tab.
+                </p>
+              )}
+            </div>
+          )}
 
           {/* Research Papers by user */}
           <div className="bg-white rounded-3xl border border-[#E3EAF3] p-6 space-y-4 shadow-xs">

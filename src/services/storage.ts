@@ -68,6 +68,24 @@ class StorageService {
 
     if (!localStorage.getItem(STORAGE_KEYS.USERS)) {
       localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(SEED_USERS));
+    } else {
+      try {
+        const storedUsers: User[] = JSON.parse(localStorage.getItem(STORAGE_KEYS.USERS) || '[]');
+        let changed = false;
+        const updatedUsers = storedUsers.map(u => {
+          const seed = SEED_USERS.find(su => su.id === u.id);
+          if (seed && (!u.avatar || u.avatar.includes('picsum.photos'))) {
+            changed = true;
+            return { ...u, avatar: seed.avatar, photoURL: seed.avatar };
+          }
+          return u;
+        });
+        if (changed) {
+          localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(updatedUsers));
+        }
+      } catch {
+        // no-op
+      }
     }
 
     // STRICT REQUIREMENT: DO NOT auto-login any user when site opens!
@@ -81,11 +99,20 @@ class StorageService {
         let changed = false;
         const updated = storedProjects.map(p => {
           const seed = SEED_PROJECTS.find(sp => sp.id === p.id);
+          const seedSupervisor = SEED_USERS.find(su => su.id === p.supervisorId);
+          let next = p;
           if (seed && seed.thumbnail !== p.thumbnail) {
             changed = true;
-            return { ...p, thumbnail: seed.thumbnail };
+            next = { ...next, thumbnail: seed.thumbnail };
           }
-          return p;
+          if (!next.supervisorAvatar || next.supervisorAvatar.includes('picsum.photos')) {
+            const replacement = seed?.supervisorAvatar || seedSupervisor?.avatar;
+            if (replacement) {
+              changed = true;
+              next = { ...next, supervisorAvatar: replacement };
+            }
+          }
+          return next;
         });
         if (changed) {
           localStorage.setItem(STORAGE_KEYS.PROJECTS, JSON.stringify(updated));
@@ -120,6 +147,26 @@ class StorageService {
     }
     if (!localStorage.getItem(STORAGE_KEYS.TEAM_MEMBERS)) {
       localStorage.setItem(STORAGE_KEYS.TEAM_MEMBERS, JSON.stringify(SEED_TEAM_MEMBERS));
+    } else {
+      try {
+        const storedTeam: TeamMember[] = JSON.parse(localStorage.getItem(STORAGE_KEYS.TEAM_MEMBERS) || '[]');
+        let changed = false;
+        const updatedTeam = storedTeam.map(tm => {
+          if (!tm.avatar || tm.avatar.includes('picsum.photos')) {
+            const seedUser = SEED_USERS.find(su => su.id === tm.userId);
+            if (seedUser?.avatar) {
+              changed = true;
+              return { ...tm, avatar: seedUser.avatar };
+            }
+          }
+          return tm;
+        });
+        if (changed) {
+          localStorage.setItem(STORAGE_KEYS.TEAM_MEMBERS, JSON.stringify(updatedTeam));
+        }
+      } catch {
+        // no-op
+      }
     }
     if (!localStorage.getItem(STORAGE_KEYS.MILESTONES)) {
       localStorage.setItem(STORAGE_KEYS.MILESTONES, JSON.stringify(SEED_MILESTONES));
@@ -156,7 +203,14 @@ class StorageService {
   // --- USERS & SESSION ---
   getUsers(): User[] {
     const raw = localStorage.getItem(STORAGE_KEYS.USERS);
-    return raw ? JSON.parse(raw) : SEED_USERS;
+    const list: User[] = raw ? JSON.parse(raw) : SEED_USERS;
+    return list.map(u => {
+      if (!u.avatar || u.avatar.includes('picsum.photos')) {
+        const seed = SEED_USERS.find(su => su.id === u.id);
+        if (seed) return { ...u, avatar: seed.avatar, photoURL: seed.avatar };
+      }
+      return u;
+    });
   }
 
   getUser(id: string): User | undefined {
@@ -238,10 +292,18 @@ class StorageService {
     const list: Project[] = raw ? JSON.parse(raw) : SEED_PROJECTS;
     return list.map(p => {
       const seed = SEED_PROJECTS.find(s => s.id === p.id);
+      const seedSupervisor = SEED_USERS.find(su => su.id === p.supervisorId);
+      let next = p;
       if (seed && seed.thumbnail !== p.thumbnail) {
-        return { ...p, thumbnail: seed.thumbnail };
+        next = { ...next, thumbnail: seed.thumbnail };
       }
-      return p;
+      if (!next.supervisorAvatar || next.supervisorAvatar.includes('picsum.photos')) {
+        const replacement = seed?.supervisorAvatar || seedSupervisor?.avatar;
+        if (replacement) {
+          next = { ...next, supervisorAvatar: replacement };
+        }
+      }
+      return next;
     });
   }
 

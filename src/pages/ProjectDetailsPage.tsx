@@ -17,16 +17,21 @@ import {
   Lock,
   MessageSquare,
   TrendingUp,
-  FolderArchive
+  FolderArchive,
+  Star,
+  MessageSquarePlus,
+  ShieldCheck,
+  AlertCircle
 } from 'lucide-react';
 import { storage } from '../services/storage';
 import { RecommendationService } from '../services/recommendationService';
-import { Project, User, Application } from '../types';
+import { Project, User, Application, MentorFeedback } from '../types';
 import { Avatar } from '../components/common/Avatar';
 import { Badge } from '../components/common/Badge';
 import { CvAttachmentField, CvAttachmentData } from '../components/common/CvAttachmentField';
 import { publicProfileService } from '../services/publicProfileService';
 import { messagingService } from '../services/messagingService';
+import { feedbackService, FEEDBACK_ASPECT_TAGS } from '../services/feedbackService';
 
 interface ProjectDetailsPageProps {
   projectId: string;
@@ -40,7 +45,7 @@ export const ProjectDetailsPage: React.FC<ProjectDetailsPageProps> = ({
   onNavigate
 }) => {
   const [project, setProject] = useState<Project | undefined>(undefined);
-  const [activeTab, setActiveTab] = useState<'overview' | 'requirements' | 'team' | 'progress' | 'discussion' | 'files'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'requirements' | 'team' | 'progress' | 'discussion' | 'files' | 'feedback'>('overview');
   const [isSaved, setIsSaved] = useState(false);
   const [applyModalOpen, setApplyModalOpen] = useState(false);
   const [contactModalOpen, setContactModalOpen] = useState(false);
@@ -51,7 +56,19 @@ export const ProjectDetailsPage: React.FC<ProjectDetailsPageProps> = ({
   const [cvData, setCvData] = useState<CvAttachmentData>({});
   const [applicationSubmitted, setApplicationSubmitted] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [tabNotice, setTabNotice] = useState<string | null>(null);
   const [applyError, setApplyError] = useState<string | null>(null);
+
+  // Mentor / Researcher feedback states
+  const [projectFeedbacks, setProjectFeedbacks] = useState<MentorFeedback[]>([]);
+  const [mentorFeedbacks, setMentorFeedbacks] = useState<MentorFeedback[]>([]);
+  const [fbRating, setFbRating] = useState<number>(0);
+  const [fbHoverRating, setFbHoverRating] = useState<number>(0);
+  const [fbTags, setFbTags] = useState<string[]>([]);
+  const [fbComment, setFbComment] = useState('');
+  const [fbSubmitting, setFbSubmitting] = useState(false);
+  const [fbError, setFbError] = useState<string | null>(null);
+  const [fbSuccess, setFbSuccess] = useState<string | null>(null);
 
   // Sync form state strictly when currentUser changes
   useEffect(() => {
@@ -90,6 +107,42 @@ export const ProjectDetailsPage: React.FC<ProjectDetailsPageProps> = ({
       setIsSaved(false);
     }
   }, [projectId, currentUser]);
+
+  useEffect(() => {
+    if (!project) return;
+    let active = true;
+
+    const syncFromList = (projList: MentorFeedback[]) => {
+      if (!active) return;
+      setProjectFeedbacks(projList);
+      if (currentUser) {
+        const mine = projList.find(f => f.authorId === currentUser.id);
+        if (mine) {
+          setFbRating(mine.rating);
+          setFbTags(mine.tags || []);
+          setFbComment(mine.comment || '');
+        }
+      }
+    };
+
+    syncFromList(feedbackService.getCachedFeedbackForProject(project.id));
+    setMentorFeedbacks(feedbackService.getCachedFeedbackForMentor(project.supervisorId));
+
+    feedbackService.fetchFeedbackForProject(project.id).then(syncFromList);
+    feedbackService.fetchFeedbackForMentor(project.supervisorId).then(list => {
+      if (active) setMentorFeedbacks(list);
+    });
+
+    const unsub = feedbackService.subscribe(() => {
+      syncFromList(feedbackService.getCachedFeedbackForProject(project.id));
+      setMentorFeedbacks(feedbackService.getCachedFeedbackForMentor(project.supervisorId));
+    });
+
+    return () => {
+      active = false;
+      unsub();
+    };
+  }, [project?.id, project?.supervisorId, currentUser?.id]);
 
   const requireAuth = (returnPath?: string, customMsg?: string): boolean => {
     if (!currentUser) {
@@ -189,6 +242,45 @@ export const ProjectDetailsPage: React.FC<ProjectDetailsPageProps> = ({
     }, 1500);
   };
 
+  const handleToggleFeedbackTag = (tag: string) => {
+    setFbTags(prev => (prev.includes(tag) ? prev.filter(t => t !== tag) : [...prev, tag]));
+  };
+
+  const handleFeedbackSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!requireAuth()) return;
+    if (!currentUser || !project) return;
+
+    setFbError(null);
+    setFbSuccess(null);
+
+    if (fbRating < 1 || fbRating > 5) {
+      setFbError('Please select a star rating between 1 and 5.');
+      return;
+    }
+    if (fbComment.trim().length < 5) {
+      setFbError('Please write a brief feedback note (at least 5 characters).');
+      return;
+    }
+
+    setFbSubmitting(true);
+    try {
+      await feedbackService.submitFeedback({
+        project,
+        author: currentUser,
+        rating: fbRating,
+        tags: fbTags,
+        comment: fbComment
+      });
+      setFbSuccess('Your feedback has been saved.');
+      setTimeout(() => setFbSuccess(null), 4000);
+    } catch {
+      setFbError('Unable to submit feedback right now. Please try again.');
+    } finally {
+      setFbSubmitting(false);
+    }
+  };
+
   // Similar projects recommendations
   const allProjects = storage.getProjects();
   const similarProjects = allProjects.filter(p => p.id !== project.id && p.areaId === project.areaId).slice(0, 3);
@@ -245,24 +337,39 @@ export const ProjectDetailsPage: React.FC<ProjectDetailsPageProps> = ({
           </div>
         </div>
 
-        {/* Supervisor Card Block (Read from publicProfiles) */}
+        {/* Supervisor Card Block (Read from publicProfiles / seed user fallback) */}
         {(() => {
           const supProfile = publicProfileService.getPublicProfileById(project.supervisorId);
-          const sName = supProfile?.name || project.supervisorName;
-          const sAvatar = supProfile?.avatar || project.supervisorAvatar;
-          const sDesig = supProfile?.headline || project.supervisorDesignation;
+          const supUser = storage.getUser(project.supervisorId);
+          const sName = supProfile?.name || supUser?.name || project.supervisorName;
+          const sAvatar = supProfile?.avatar || supUser?.avatar || project.supervisorAvatar;
+          const sDesig = supProfile?.headline || supUser?.headline || project.supervisorDesignation;
+          const mentorSummary = feedbackService.computeSummary(mentorFeedbacks);
           return (
             <div className="mt-8 pt-6 border-t border-gray-100 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
               <div className="flex items-center gap-3.5">
                 <Avatar src={sAvatar} name={sName} size="md" />
                 <div>
-                  <span className="text-[11px] font-bold uppercase tracking-wider text-gray-400">Project Supervisor</span>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-[11px] font-bold uppercase tracking-wider text-gray-400">Project Supervisor</span>
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab('feedback')}
+                      className="inline-flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded-full bg-[#FEF3C7]/70 text-[#B45309] hover:bg-[#FEF3C7] transition-colors cursor-pointer"
+                      title="View or submit collaborator feedback"
+                    >
+                      <Star className="w-3 h-3 fill-[#F59E0B] text-[#F59E0B]" />
+                      {mentorSummary.count > 0
+                        ? `${mentorSummary.average.toFixed(1)} (${mentorSummary.count})`
+                        : 'Feedback'}
+                    </button>
+                  </div>
                   <h4 className="font-bold text-sm sm:text-base text-[#0B2A55]">{sName}</h4>
                   <p className="text-xs text-gray-500">{sDesig}</p>
                 </div>
               </div>
 
-              <div className="flex items-center gap-3">
+              <div className="flex flex-wrap items-center gap-2.5">
                 <button
                   onClick={() => {
                     if (!requireAuth(`/u/${project.supervisorId}`)) return;
@@ -289,37 +396,68 @@ export const ProjectDetailsPage: React.FC<ProjectDetailsPageProps> = ({
       </div>
 
       {/* Tabs Navigation (Pill style matching screenshot) */}
-      <div className="flex items-center gap-2 border-b border-[#E3EAF3] pb-2 overflow-x-auto text-xs font-bold">
-        {[
-          { key: 'overview', label: 'Overview' },
-          { key: 'requirements', label: 'Requirements' },
-          { key: 'team', label: `Team (${teamMembers.length}/${project.totalPositions})`, locked: !currentUser },
-          { key: 'progress', label: `Progress (${project.progressPercent}%)`, locked: !currentUser },
-          { key: 'discussion', label: 'Discussion', locked: !currentUser || !isMember },
-          { key: 'files', label: 'Files', locked: !currentUser || !isMember }
-        ].map(t => (
-          <button
-            key={t.key}
-            onClick={() => {
-              if (t.key !== 'overview' && t.key !== 'requirements') {
-                if (!requireAuth()) return;
-              }
-              if ((t.key === 'discussion' || t.key === 'files') && !isMember) {
-                alert('Discussion and Files are accessible to approved team members.');
-                return;
-              }
-              setActiveTab(t.key as any);
-            }}
-            className={`px-4 py-2 rounded-xl transition-all cursor-pointer flex items-center gap-1.5 whitespace-nowrap ${
-              activeTab === t.key
-                ? 'bg-[#FFC83D] text-[#0B2A55] shadow-xs'
-                : 'text-gray-600 hover:bg-[#F5F8FC]'
-            }`}
-          >
-            {t.locked && <Lock className="w-3 h-3 text-gray-400" />}
-            {t.label}
-          </button>
-        ))}
+      <div className="space-y-2">
+        <div className="flex items-center gap-2 border-b border-[#E3EAF3] pb-2 overflow-x-auto text-xs font-bold">
+          {[
+            { key: 'overview', label: 'Overview' },
+            { key: 'requirements', label: 'Requirements' },
+            { key: 'team', label: `Team (${teamMembers.length}/${project.totalPositions})`, locked: !currentUser },
+            { key: 'progress', label: `Progress (${project.progressPercent}%)`, locked: !currentUser },
+            { key: 'discussion', label: 'Discussion', locked: !currentUser || !isMember },
+            { key: 'files', label: 'Files', locked: !currentUser || !isMember },
+            {
+              key: 'feedback',
+              label: projectFeedbacks.length > 0 ? `Feedback (${projectFeedbacks.length})` : 'Feedback'
+            }
+          ].map(t => (
+            <button
+              key={t.key}
+              onClick={() => {
+                setTabNotice(null);
+                if (t.key !== 'overview' && t.key !== 'requirements' && t.key !== 'feedback') {
+                  if (!requireAuth()) return;
+                }
+                if ((t.key === 'discussion' || t.key === 'files') && !isMember) {
+                  setTabNotice('Discussion and Files are accessible to approved team members.');
+                  setTimeout(() => setTabNotice(null), 4000);
+                  return;
+                }
+                if ((t.key === 'discussion' || t.key === 'files') && isMember) {
+                  onNavigate(`/projects/${project.id}/${t.key}`);
+                  return;
+                }
+                setActiveTab(t.key as typeof activeTab);
+              }}
+              className={`px-4 py-2 rounded-xl transition-all cursor-pointer flex items-center gap-1.5 whitespace-nowrap ${
+                activeTab === t.key
+                  ? 'bg-[#FFC83D] text-[#0B2A55] shadow-xs'
+                  : 'text-gray-600 hover:bg-[#F5F8FC]'
+              }`}
+            >
+              {t.locked && <Lock className="w-3 h-3 text-gray-400" />}
+              {t.key === 'feedback' && (
+                <MessageSquarePlus className="w-3.5 h-3.5 text-[#0B6BE6]" />
+              )}
+              {t.label}
+            </button>
+          ))}
+        </div>
+
+        {tabNotice && (
+          <div className="px-4 py-2.5 bg-[#FEF3C7] text-[#92400E] border border-[#FDE68A] rounded-xl text-xs font-semibold flex items-center justify-between gap-2 animate-fade-in">
+            <div className="flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 shrink-0" />
+              <span>{tabNotice}</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setTabNotice(null)}
+              className="text-[#92400E] hover:opacity-70"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Tab Content */}
@@ -418,6 +556,294 @@ export const ProjectDetailsPage: React.FC<ProjectDetailsPageProps> = ({
               </button>
             </div>
           )}
+
+          {activeTab === 'feedback' && (() => {
+            const supProfile = publicProfileService.getPublicProfileById(project.supervisorId);
+            const supUser = storage.getUser(project.supervisorId);
+            const sName = supProfile?.name || supUser?.name || project.supervisorName;
+            const sAvatar = supProfile?.avatar || supUser?.avatar || project.supervisorAvatar;
+            const sDesig = supProfile?.headline || supUser?.headline || project.supervisorDesignation;
+
+            const projSummary = feedbackService.computeSummary(projectFeedbacks);
+            const mentorSummary = feedbackService.computeSummary(mentorFeedbacks);
+            const eligibility = feedbackService.canCollaboratorLeaveFeedback(currentUser, project, teamMembers);
+            const hasExisting = currentUser
+              ? projectFeedbacks.some(f => f.authorId === currentUser.id)
+              : false;
+            const displayRating = fbHoverRating || fbRating;
+            const ratingLabels: Record<number, string> = {
+              1: 'Needs Improvement',
+              2: 'Fair',
+              3: 'Good',
+              4: 'Very Supportive',
+              5: 'Outstanding Mentor'
+            };
+
+            return (
+              <div className="space-y-6">
+                {/* Supervisor Feedback Overview Header */}
+                <div className="bg-white rounded-3xl border border-[#E3EAF3] p-6 sm:p-7 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                  <div className="flex items-center gap-4">
+                    <Avatar src={sAvatar} name={sName} size="lg" />
+                    <div className="space-y-1">
+                      <span className="text-[11px] font-bold uppercase tracking-wider text-gray-400">
+                        Supervisor & Research Mentor
+                      </span>
+                      <h3 className="font-bold text-lg text-[#0B2A55]">{sName}</h3>
+                      <p className="text-xs text-gray-500">{sDesig}</p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-3 sm:text-right bg-[#F5F8FC] px-4 py-3 rounded-2xl border border-[#E3EAF3]">
+                    <div>
+                      <div className="flex items-center sm:justify-end gap-1.5">
+                        <Star className="w-4 h-4 fill-[#F59E0B] text-[#F59E0B]" />
+                        {mentorSummary.count > 0 ? (
+                          <span className="text-lg font-extrabold text-[#0B2A55]">
+                            {mentorSummary.average.toFixed(1)}
+                          </span>
+                        ) : (
+                          <span className="text-xs font-bold text-gray-500">No feedback yet</span>
+                        )}
+                      </div>
+                      <span className="text-[11px] text-gray-500 block">
+                        {mentorSummary.count > 0
+                          ? `${mentorSummary.count} collaborator review${mentorSummary.count > 1 ? 's' : ''} overall`
+                          : 'Verified team feedback appears here'}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Submit / Update Feedback Form */}
+                <div className="bg-white rounded-3xl border border-[#E3EAF3] p-6 sm:p-8 space-y-4 shadow-xs">
+                  <div className="flex items-center justify-between gap-2">
+                    <div>
+                      <h4 className="font-bold text-base text-[#0B2A55]">
+                        {hasExisting ? 'Update Your Feedback' : 'Give Feedback to Supervisor / Researcher'}
+                      </h4>
+                      <p className="text-xs text-gray-500">
+                        Collaborators working under {sName} can rate mentorship, communication, and research guidance.
+                      </p>
+                    </div>
+                  </div>
+
+                  {!currentUser ? (
+                    <div className="p-4 rounded-2xl bg-[#F5F8FC] border border-[#E3EAF3] flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                      <p className="text-xs text-gray-600">
+                        Log in with your team account to share mentorship feedback for {sName}.
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => requireAuth(`/projects/${project.id}`, 'Please log in to submit mentorship feedback.')}
+                        className="px-4 py-2 bg-[#0B6BE6] hover:bg-[#0956b8] text-white rounded-xl text-xs font-bold cursor-pointer shrink-0"
+                      >
+                        Log in to Give Feedback
+                      </button>
+                    </div>
+                  ) : eligibility.allowed ? (
+                    <form onSubmit={handleFeedbackSubmit} className="space-y-4">
+                      {fbError && (
+                        <div className="p-3 bg-red-50 text-red-700 border border-red-200 rounded-xl text-xs font-semibold">
+                          {fbError}
+                        </div>
+                      )}
+                      {fbSuccess && (
+                        <div className="p-3 bg-[#DDF5EA] text-[#0E9F6E] border border-[#A7F3D0] rounded-xl text-xs font-bold flex items-center gap-2">
+                          <CheckCircle2 className="w-4 h-4 shrink-0" />
+                          <span>{fbSuccess}</span>
+                        </div>
+                      )}
+
+                      {/* Star Rating Picker */}
+                      <div className="space-y-1.5">
+                        <label className="text-xs font-bold text-gray-700 block">
+                          Overall Mentorship Rating *
+                        </label>
+                        <div className="flex flex-wrap items-center gap-3">
+                          <div className="flex items-center gap-1">
+                            {[1, 2, 3, 4, 5].map(star => {
+                              const filled = star <= displayRating;
+                              return (
+                                <button
+                                  key={star}
+                                  type="button"
+                                  onClick={() => setFbRating(star)}
+                                  onMouseEnter={() => setFbHoverRating(star)}
+                                  onMouseLeave={() => setFbHoverRating(0)}
+                                  className="p-1 rounded-lg hover:bg-[#FEF3C7]/40 transition-colors cursor-pointer"
+                                  aria-label={`Rate ${star} out of 5 stars`}
+                                >
+                                  <Star
+                                    className={`w-6 h-6 transition-colors ${
+                                      filled ? 'fill-[#F59E0B] text-[#F59E0B]' : 'text-gray-300'
+                                    }`}
+                                  />
+                                </button>
+                              );
+                            })}
+                          </div>
+                          {displayRating > 0 && (
+                            <span className="text-xs font-bold text-[#B45309] bg-[#FEF3C7]/70 px-2.5 py-1 rounded-lg">
+                              {displayRating}/5 • {ratingLabels[displayRating]}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Feedback Tags */}
+                      <div className="space-y-1.5">
+                        <label className="text-xs font-bold text-gray-700 block">
+                          Highlights (optional)
+                        </label>
+                        <div className="flex flex-wrap gap-2">
+                          {FEEDBACK_ASPECT_TAGS.map(tag => {
+                            const selected = fbTags.includes(tag);
+                            return (
+                              <button
+                                key={tag}
+                                type="button"
+                                onClick={() => handleToggleFeedbackTag(tag)}
+                                className={`px-3 py-1 rounded-full text-xs font-semibold border transition-colors cursor-pointer ${
+                                  selected
+                                    ? 'bg-[#DCE6FB] border-[#0B6BE6] text-[#0B6BE6]'
+                                    : 'bg-[#F5F8FC] border-[#E3EAF3] text-gray-600 hover:bg-gray-100'
+                                }`}
+                              >
+                                {tag}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      {/* Comment */}
+                      <div className="space-y-1.5">
+                        <label className="text-xs font-bold text-gray-700 block">
+                          Your Feedback *
+                        </label>
+                        <textarea
+                          rows={3}
+                          required
+                          value={fbComment}
+                          onChange={(e) => setFbComment(e.target.value)}
+                          placeholder={`Share your experience collaborating with ${sName} on guidance, responsiveness, and lab support...`}
+                          className="w-full bg-[#F5F8FC] border border-[#E3EAF3] rounded-xl p-3 text-xs text-[#0B2A55] focus:outline-hidden focus:border-[#0B6BE6]"
+                        />
+                      </div>
+
+                      <div className="flex items-center justify-end">
+                        <button
+                          type="submit"
+                          disabled={fbSubmitting}
+                          className="px-5 py-2.5 bg-[#0B6BE6] hover:bg-[#0956b8] disabled:opacity-60 text-white rounded-xl text-xs font-bold shadow-xs cursor-pointer transition-colors"
+                        >
+                          {fbSubmitting
+                            ? 'Saving...'
+                            : hasExisting
+                            ? 'Update Feedback'
+                            : 'Submit Feedback'}
+                        </button>
+                      </div>
+                    </form>
+                  ) : (
+                    <div className="p-4 rounded-2xl bg-[#F5F8FC] border border-[#E3EAF3] flex items-start gap-3 text-xs text-gray-600">
+                      <ShieldCheck className="w-4 h-4 text-[#0B6BE6] shrink-0 mt-0.5" />
+                      <div className="space-y-1">
+                        <p className="font-semibold text-[#0B2A55]">{eligibility.reason}</p>
+                        {!isOwner && !existingApp && !isPositionsFilled && (
+                          <p className="text-gray-500">
+                            Once your application to work under {sName} is approved, you can submit feedback here.
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Project Feedback List */}
+                <div className="bg-white rounded-3xl border border-[#E3EAF3] p-6 sm:p-8 space-y-4 shadow-xs">
+                  <div className="flex items-center justify-between border-b border-gray-100 pb-3">
+                    <h4 className="font-bold text-base text-[#0B2A55]">
+                      Project Collaborator Feedback ({projectFeedbacks.length})
+                    </h4>
+                    {projSummary.count > 0 && (
+                      <span className="inline-flex items-center gap-1 text-xs font-bold text-[#B45309] bg-[#FEF3C7]/70 px-2.5 py-1 rounded-full">
+                        <Star className="w-3.5 h-3.5 fill-[#F59E0B] text-[#F59E0B]" />
+                        {projSummary.average.toFixed(1)} avg
+                      </span>
+                    )}
+                  </div>
+
+                  {projectFeedbacks.length > 0 ? (
+                    <div className="space-y-3">
+                      {projectFeedbacks.map(fb => {
+                        const authorProf = publicProfileService.getPublicProfileById(fb.authorId);
+                        const authorUser = storage.getUser(fb.authorId);
+                        const aAvatar = authorProf?.avatar || authorUser?.avatar || fb.authorAvatar;
+                        const aName = authorProf?.name || authorUser?.name || fb.authorName;
+                        return (
+                          <div
+                            key={fb.id}
+                            className="p-4 rounded-2xl border border-[#E3EAF3] bg-[#F5F8FC] space-y-2.5"
+                          >
+                            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                              <div className="flex items-center gap-3">
+                                <Avatar src={aAvatar} name={aName} size="sm" />
+                                <div>
+                                  <div className="flex items-center gap-2">
+                                    <span className="font-bold text-xs sm:text-sm text-[#0B2A55]">{aName}</span>
+                                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-[#DDF5EA] text-[#0E9F6E]">
+                                      Collaborator
+                                    </span>
+                                  </div>
+                                  <span className="text-[11px] text-gray-500">
+                                    {fb.authorDepartment || 'Research Team'} • {new Date(fb.updatedAt).toLocaleDateString()}
+                                  </span>
+                                </div>
+                              </div>
+
+                              <div className="flex items-center gap-0.5">
+                                {[1, 2, 3, 4, 5].map(star => (
+                                  <Star
+                                    key={star}
+                                    className={`w-3.5 h-3.5 ${
+                                      star <= fb.rating ? 'fill-[#F59E0B] text-[#F59E0B]' : 'text-gray-300'
+                                    }`}
+                                  />
+                                ))}
+                              </div>
+                            </div>
+
+                            {fb.tags && fb.tags.length > 0 && (
+                              <div className="flex flex-wrap gap-1.5">
+                                {fb.tags.map(tag => (
+                                  <span
+                                    key={tag}
+                                    className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-white border border-[#E3EAF3] text-[#0B2A55]"
+                                  >
+                                    {tag}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+
+                            <p className="text-xs sm:text-sm text-gray-700 leading-relaxed">
+                              {fb.comment}
+                            </p>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <p className="text-xs text-gray-500 py-4 text-center">
+                      No collaborator feedback has been submitted for this project yet.
+                    </p>
+                  )}
+                </div>
+              </div>
+            );
+          })()}
         </div>
 
         {/* Right Sidebar: 4 Info Cards + Action Buttons matching Screenshot */}

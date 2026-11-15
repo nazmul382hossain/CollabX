@@ -19,6 +19,10 @@ export const Avatar: React.FC<AvatarProps> = ({
 }) => {
   const [imageError, setImageError] = React.useState(false);
 
+  React.useEffect(() => {
+    setImageError(false);
+  }, [src]);
+
   const sizeClasses = {
     xs: 'w-6 h-6 text-[10px]',
     sm: 'w-8 h-8 text-xs',
