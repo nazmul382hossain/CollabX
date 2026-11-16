@@ -148,20 +148,28 @@ export class ExternalSearchService {
     const results: ExternalScholarlyResult[] = [];
     const seenTitles = new Set<string>();
 
-    const normalizeTitle = (t: string) => t.toLowerCase().replace(/[^a-z0-9]/g, '');
+    const safeStr = (val: unknown, fallback = ''): string => {
+      if (typeof val === 'string') return val;
+      if (typeof val === 'number' || typeof val === 'boolean') return String(val);
+      return fallback;
+    };
+
+    const normalizeTitle = (t: unknown) => safeStr(t).toLowerCase().replace(/[^a-z0-9]/g, '');
 
     // 0. Match authentic university repository papers from CollabX
     try {
       const qLower = cleanQ.toLowerCase();
       const localPapers = storage.getPapers().filter(p =>
-        p.title.toLowerCase().includes(qLower) ||
-        p.abstract.toLowerCase().includes(qLower) ||
-        (p.keywords && p.keywords.some(k => k.toLowerCase().includes(qLower))) ||
-        (p.authors && p.authors.some(a => a.toLowerCase().includes(qLower)))
+        safeStr(p.title).toLowerCase().includes(qLower) ||
+        safeStr(p.abstract).toLowerCase().includes(qLower) ||
+        (Array.isArray(p.keywords) && p.keywords.some(k => safeStr(k).toLowerCase().includes(qLower))) ||
+        (Array.isArray(p.authors) && p.authors.some(a => safeStr(a).toLowerCase().includes(qLower)))
       );
 
       for (const p of localPapers) {
-        const norm = normalizeTitle(p.title);
+        const title = safeStr(p.title).trim();
+        if (!title) continue;
+        const norm = normalizeTitle(title);
         if (seenTitles.has(norm)) continue;
         seenTitles.add(norm);
 
@@ -198,7 +206,7 @@ export class ExternalSearchService {
           const data = await res.json();
           if (data.results && Array.isArray(data.results)) {
             for (const item of data.results) {
-              const title = item.title || '';
+              const title = safeStr(item?.title).replace(/<[^>]+>/g, '').trim();
               if (!title) continue;
               const norm = normalizeTitle(title);
               if (seenTitles.has(norm)) continue;
@@ -206,19 +214,24 @@ export class ExternalSearchService {
 
               // Reconstruct authentic abstract from inverted index if present
               let reconstructedAbstract = '';
-              if (item.abstract_inverted_index) {
+              if (item.abstract_inverted_index && typeof item.abstract_inverted_index === 'object') {
                 const words: [string, number][] = [];
                 for (const [word, positions] of Object.entries(item.abstract_inverted_index)) {
-                  for (const pos of positions as number[]) {
-                    words.push([word, pos]);
+                  if (!Array.isArray(positions)) continue;
+                  for (const pos of positions) {
+                    if (typeof pos === 'number') {
+                      words.push([word, pos]);
+                    }
                   }
                 }
                 words.sort((a, b) => a[1] - b[1]);
                 reconstructedAbstract = words.map(w => w[0]).join(' ').slice(0, 480) + (words.length > 60 ? '...' : '');
-              } else if (item.primary_location?.source?.display_name) {
-                reconstructedAbstract = `Published in ${item.primary_location.source.display_name}. Indexed in global scholarly bibliographic records.`;
-              } else {
-                reconstructedAbstract = `Scholarly work indexed by OpenAlex with full verified author and publication metadata.`;
+              }
+              if (!reconstructedAbstract) {
+                const srcName = safeStr(item.primary_location?.source?.display_name).trim();
+                reconstructedAbstract = srcName
+                  ? `Published in ${srcName}. Indexed in global scholarly bibliographic records.`
+                  : `Scholarly work indexed by OpenAlex with full verified author and publication metadata.`;
               }
 
               // Extract authentic authors in original order returned
@@ -226,7 +239,7 @@ export class ExternalSearchService {
 
               // Determine real document type
               let docType: ExternalScholarlyResult['documentType'] = 'Research Paper';
-              const rawType = (item.type || '').toLowerCase();
+              const rawType = safeStr(item.type).toLowerCase();
               const lowerTitle = title.toLowerCase();
 
               if (rawType.includes('dissertation') || rawType.includes('thesis') || lowerTitle.includes('thesis') || lowerTitle.includes('dissertation')) {
@@ -239,23 +252,25 @@ export class ExternalSearchService {
                 docType = 'Review Article';
               }
 
-              const venue = item.primary_location?.source?.display_name || 
-                            item.host_venue?.display_name || 
+              const venue = safeStr(item.primary_location?.source?.display_name).trim() || 
+                            safeStr(item.host_venue?.display_name).trim() || 
                             (docType === 'Thesis' ? 'University Graduate Thesis Repository' : 'Academic Journal / Conference');
 
-              const validDoi = this.cleanAndValidateDoi(item.doi);
+              const validDoi = this.cleanAndValidateDoi(safeStr(item.doi));
+              const oaPdf = safeStr(item.open_access?.oa_url).trim() || safeStr(item.primary_location?.pdf_url).trim() || undefined;
+              const landingUrl = safeStr(item.primary_location?.landing_page_url).trim() || safeStr(item.id).trim() || 'https://openalex.org';
 
               results.push({
-                id: item.id || `openalex-${Math.random().toString(36).slice(2)}`,
+                id: safeStr(item.id).trim() || `openalex-${Math.random().toString(36).slice(2)}`,
                 source: 'OpenAlex',
                 title,
                 authors,
-                year: item.publication_year || 2024,
+                year: typeof item.publication_year === 'number' ? item.publication_year : 2024,
                 doi: validDoi,
                 citedByCount: typeof item.cited_by_count === 'number' ? item.cited_by_count : 0,
                 abstract: reconstructedAbstract,
-                oaPdfUrl: item.open_access?.oa_url || item.primary_location?.pdf_url || undefined,
-                url: validDoi ? `https://doi.org/${validDoi}` : (item.primary_location?.landing_page_url || item.id || `https://openalex.org`),
+                oaPdfUrl: oaPdf,
+                url: validDoi ? `https://doi.org/${validDoi}` : landingUrl,
                 documentType: docType,
                 venue
               });
@@ -277,24 +292,25 @@ export class ExternalSearchService {
 
         if (res.ok) {
           const data = await res.json();
-          const items = data.resultList?.result || [];
+          const items = Array.isArray(data.resultList?.result) ? data.resultList.result : [];
           for (const item of items) {
-            const title = (item.title || '').replace(/<[^>]+>/g, '').trim();
+            const title = safeStr(item?.title).replace(/<[^>]+>/g, '').trim();
             if (!title) continue;
             const norm = normalizeTitle(title);
             if (seenTitles.has(norm)) continue;
             seenTitles.add(norm);
 
             const authors = this.normalizeAuthors('europe pmc', item);
-            const year = parseInt(item.pubYear) || 2024;
-            const rawAbstract = (item.abstractText || '').replace(/<[^>]+>/g, '').trim();
+            const year = parseInt(safeStr(item.pubYear), 10) || 2024;
+            const rawAbstract = safeStr(item.abstractText).replace(/<[^>]+>/g, '').trim();
+            const journalTitle = safeStr(item.journalTitle).trim();
             const abstract = rawAbstract 
               ? rawAbstract.slice(0, 450) + (rawAbstract.length > 450 ? '...' : '') 
-              : `Scientific study published in ${item.journalTitle || 'Europe PMC Indexed Literature'}. Verified metadata available.`;
+              : `Scientific study published in ${journalTitle || 'Europe PMC Indexed Literature'}. Verified metadata available.`;
 
             let docType: ExternalScholarlyResult['documentType'] = 'Research Paper';
             const lowerT = title.toLowerCase();
-            if (item.pubType?.toLowerCase().includes('preprint') || item.source === 'PPR') {
+            if (safeStr(item.pubType).toLowerCase().includes('preprint') || item.source === 'PPR') {
               docType = 'Preprint';
             } else if (lowerT.includes('thesis') || lowerT.includes('dissertation')) {
               docType = 'Thesis';
@@ -302,25 +318,27 @@ export class ExternalSearchService {
               docType = 'Review Article';
             }
 
-            const pdfUrl = item.isOpenAccess === 'Y' && item.pmcid 
-              ? `https://europepmc.org/articles/${item.pmcid}?pdf=render` 
+            const pmcid = safeStr(item.pmcid).trim();
+            const pdfUrl = item.isOpenAccess === 'Y' && pmcid 
+              ? `https://europepmc.org/articles/${pmcid}?pdf=render` 
               : undefined;
 
-            const validDoi = this.cleanAndValidateDoi(item.doi);
+            const validDoi = this.cleanAndValidateDoi(safeStr(item.doi));
+            const epmcId = safeStr(item.id).trim();
 
             results.push({
-              id: `epmc-${item.id || Math.random().toString(36).slice(2)}`,
+              id: `epmc-${epmcId || Math.random().toString(36).slice(2)}`,
               source: 'Europe PMC',
               title,
               authors,
               year,
               doi: validDoi,
-              citedByCount: item.citedByCount || 0,
+              citedByCount: typeof item.citedByCount === 'number' ? item.citedByCount : 0,
               abstract,
               oaPdfUrl: pdfUrl,
-              url: validDoi ? `https://doi.org/${validDoi}` : `https://europepmc.org/article/${item.source || 'MED'}/${item.id}`,
+              url: validDoi ? `https://doi.org/${validDoi}` : `https://europepmc.org/article/${safeStr(item.source, 'MED')}/${epmcId}`,
               documentType: docType,
-              venue: item.journalTitle || 'European Academic Literature Archive'
+              venue: journalTitle || 'European Academic Literature Archive'
             });
           }
         }
@@ -339,22 +357,25 @@ export class ExternalSearchService {
 
         if (res.ok) {
           const data = await res.json();
-          const items = data.message?.items || [];
+          const items = Array.isArray(data.message?.items) ? data.message.items : [];
           for (const item of items) {
-            const rawTitle = Array.isArray(item.title) ? item.title[0] : item.title;
+            const rawTitleVal = Array.isArray(item?.title) ? item.title[0] : item?.title;
+            const rawTitle = safeStr(rawTitleVal).replace(/<[^>]+>/g, '').trim();
             if (!rawTitle) continue;
             const norm = normalizeTitle(rawTitle);
             if (seenTitles.has(norm)) continue;
             seenTitles.add(norm);
 
             const authors = this.normalizeAuthors('crossref', item);
-            const year = item.published?.['date-parts']?.[0]?.[0] || 2024;
-            const venue = item['container-title']?.[0] || item.publisher || 'Peer-Reviewed Academic Press';
-            const validDoi = this.cleanAndValidateDoi(item.DOI);
-            const citedCount = item['is-referenced-by-count'] || 0;
+            const rawYear = item.published?.['date-parts']?.[0]?.[0];
+            const year = typeof rawYear === 'number' ? rawYear : 2024;
+            const containerTitle = Array.isArray(item['container-title']) ? safeStr(item['container-title'][0]).trim() : safeStr(item['container-title']).trim();
+            const venue = containerTitle || safeStr(item.publisher).trim() || 'Peer-Reviewed Academic Press';
+            const validDoi = this.cleanAndValidateDoi(safeStr(item.DOI));
+            const citedCount = typeof item['is-referenced-by-count'] === 'number' ? item['is-referenced-by-count'] : 0;
 
             let docType: ExternalScholarlyResult['documentType'] = 'Research Paper';
-            const typeLower = (item.type || '').toLowerCase();
+            const typeLower = safeStr(item.type).toLowerCase();
             const titleLower = rawTitle.toLowerCase();
             if (typeLower.includes('dissertation') || titleLower.includes('thesis') || titleLower.includes('dissertation')) {
               docType = 'Thesis';
@@ -365,9 +386,12 @@ export class ExternalSearchService {
             }
 
             // Authentic abstract or bibliographic notice
-            const abstract = item.abstract 
-              ? item.abstract.replace(/<[^>]+>/g, '').slice(0, 450)
+            const rawCrAbstract = safeStr(item.abstract).replace(/<[^>]+>/g, '').trim();
+            const abstract = rawCrAbstract 
+              ? rawCrAbstract.slice(0, 450) + (rawCrAbstract.length > 450 ? '...' : '')
               : `Peer-reviewed scientific publication indexed by Crossref. Published by ${venue}. Registered DOI: ${validDoi || 'Included'}.`;
+
+            const linkUrl = Array.isArray(item.link) ? safeStr(item.link[0]?.URL).trim() : '';
 
             results.push({
               id: `crossref-${validDoi || Math.random().toString(36).slice(2)}`,
@@ -378,7 +402,7 @@ export class ExternalSearchService {
               doi: validDoi,
               citedByCount: citedCount,
               abstract,
-              oaPdfUrl: item.link?.[0]?.URL || (validDoi ? `https://doi.org/${validDoi}` : undefined),
+              oaPdfUrl: linkUrl || (validDoi ? `https://doi.org/${validDoi}` : undefined),
               url: validDoi ? `https://doi.org/${validDoi}` : 'https://crossref.org',
               documentType: docType,
               venue

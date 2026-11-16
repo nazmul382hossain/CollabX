@@ -12,6 +12,7 @@ import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { CompleteVerificationModal } from './components/auth/CompleteVerificationModal';
 import { ProtectedRoute } from './components/auth/ProtectedRoute';
 import { RoleRoute } from './components/auth/RoleRoute';
+import { ErrorBoundary } from './components/common/ErrorBoundary';
 
 // Pages
 import { LandingPage } from './pages/LandingPage';
@@ -775,13 +776,17 @@ function AppContent() {
             />
 
             <main ref={mainContentRef} className="flex-1 p-4 sm:p-6 lg:p-8 overflow-y-auto max-w-7xl mx-auto w-full">
-              {renderPage()}
+              <ErrorBoundary key={currentPath} onReset={() => handleNavigate('/')}>
+                {renderPage()}
+              </ErrorBoundary>
             </main>
           </div>
         </div>
       ) : (
         <main className="flex-1">
-          {renderPage()}
+          <ErrorBoundary key={currentPath} onReset={() => handleNavigate('/')}>
+            {renderPage()}
+          </ErrorBoundary>
         </main>
       )}
 
@@ -789,11 +794,13 @@ function AppContent() {
       <Footer onNavigate={handleNavigate} />
 
       {/* Full-Screen Search Modal (Ctrl+K or /) */}
-      <SearchModal
-        isOpen={searchModalOpen}
-        onClose={() => setSearchModalOpen(false)}
-        onNavigate={handleNavigate}
-      />
+      <ErrorBoundary onReset={() => setSearchModalOpen(false)}>
+        <SearchModal
+          isOpen={searchModalOpen}
+          onClose={() => setSearchModalOpen(false)}
+          onNavigate={handleNavigate}
+        />
+      </ErrorBoundary>
 
       {/* Live In-App Notification / Route Guard Access Denied Toast */}
       {activeToast && (
@@ -841,9 +848,11 @@ function AppContent() {
 
 export function App() {
   return (
-    <AuthProvider>
-      <AppContent />
-    </AuthProvider>
+    <ErrorBoundary>
+      <AuthProvider>
+        <AppContent />
+      </AuthProvider>
+    </ErrorBoundary>
   );
 }
 

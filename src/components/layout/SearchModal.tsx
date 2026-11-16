@@ -78,77 +78,115 @@ export const SearchModal: React.FC<SearchModalProps> = ({
 
   // Debounced search for global scholarly articles and thesis papers
   useEffect(() => {
-    if (!query.trim()) {
+    if (!isOpen || !query.trim()) {
       setScholarlyResults([]);
+      setLoadingScholarly(false);
       return;
     }
 
+    let cancelled = false;
     const timer = setTimeout(async () => {
       setLoadingScholarly(true);
-      const res = await ExternalSearchService.searchScholarly(query);
-      setScholarlyResults(res);
-      setLoadingScholarly(false);
+      try {
+        const res = await ExternalSearchService.searchScholarly(query);
+        if (!cancelled) {
+          setScholarlyResults(Array.isArray(res) ? res : []);
+        }
+      } catch (err) {
+        console.error('[SearchModal] Scholarly search error:', err);
+        if (!cancelled) {
+          setScholarlyResults([]);
+        }
+      } finally {
+        if (!cancelled) {
+          setLoadingScholarly(false);
+        }
+      }
     }, 300);
 
-    return () => clearTimeout(timer);
-  }, [query]);
-
-  if (!isOpen) return null;
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [query, isOpen]);
 
   const qLower = query.toLowerCase().trim();
 
-  // Filter local items without restricting to fixed areas
-  const localProjects: Project[] = qLower ? storage.getProjects().filter(p => 
-    p.title.toLowerCase().includes(qLower) || 
-    p.summary.toLowerCase().includes(qLower) ||
-    p.areaName.toLowerCase().includes(qLower) ||
-    p.requiredSkills.some(s => s.toLowerCase().includes(qLower)) ||
-    p.tags.some(t => t.toLowerCase().includes(qLower))
-  ) : storage.getProjects().slice(0, 3);
+  // Filter local items safely without assuming optional fields are always defined
+  const localProjects: Project[] = useMemo(() => {
+    const all = storage.getProjects();
+    if (!qLower) return all.slice(0, 3);
+    return all.filter(p =>
+      (p.title || '').toLowerCase().includes(qLower) ||
+      (p.summary || '').toLowerCase().includes(qLower) ||
+      (p.areaName || '').toLowerCase().includes(qLower) ||
+      (Array.isArray(p.requiredSkills) && p.requiredSkills.some(s => (s || '').toLowerCase().includes(qLower))) ||
+      (Array.isArray(p.tags) && p.tags.some(t => (t || '').toLowerCase().includes(qLower)))
+    );
+  }, [qLower, isOpen]);
 
-  const localPapers: Paper[] = qLower ? storage.getPapers().filter(p =>
-    p.title.toLowerCase().includes(qLower) ||
-    p.abstract.toLowerCase().includes(qLower) ||
-    p.keywords.some(k => k.toLowerCase().includes(qLower)) ||
-    p.authors.some(a => a.toLowerCase().includes(qLower)) ||
-    p.paperType.toLowerCase().includes(qLower)
-  ) : storage.getPapers().slice(0, 3);
+  const localPapers: Paper[] = useMemo(() => {
+    const all = storage.getPapers();
+    if (!qLower) return all.slice(0, 3);
+    return all.filter(p =>
+      (p.title || '').toLowerCase().includes(qLower) ||
+      (p.abstract || '').toLowerCase().includes(qLower) ||
+      (Array.isArray(p.keywords) && p.keywords.some(k => (k || '').toLowerCase().includes(qLower))) ||
+      (Array.isArray(p.authors) && p.authors.some(a => (a || '').toLowerCase().includes(qLower))) ||
+      (p.paperType || '').toLowerCase().includes(qLower)
+    );
+  }, [qLower, isOpen]);
 
-  const localPeople: PublicProfile[] = qLower ? publicProfileService.getPublicProfiles().filter(u =>
-    u.name.toLowerCase().includes(qLower) ||
-    u.headline.toLowerCase().includes(qLower) ||
-    u.skills.some(s => s.toLowerCase().includes(qLower)) ||
-    u.department.toLowerCase().includes(qLower)
-  ) : publicProfileService.getPublicProfiles().slice(0, 3);
+  const localPeople: PublicProfile[] = useMemo(() => {
+    const all = publicProfileService.getPublicProfiles();
+    if (!qLower) return all.slice(0, 3);
+    return all.filter(u =>
+      (u.name || '').toLowerCase().includes(qLower) ||
+      (u.headline || '').toLowerCase().includes(qLower) ||
+      (Array.isArray(u.skills) && u.skills.some(s => (s || '').toLowerCase().includes(qLower))) ||
+      (u.department || '').toLowerCase().includes(qLower)
+    );
+  }, [qLower, isOpen]);
 
   // Filtered scholarly results by document type
-  const filteredScholarly = scholarlyResults.filter(s => {
-    // Document Type Filter
-    if (scholarlyFilter === 'thesis') {
-      const isThesis = s.documentType === 'Thesis' || s.documentType === 'Dissertation' || s.title.toLowerCase().includes('thesis') || s.title.toLowerCase().includes('dissertation');
-      if (!isThesis) return false;
-    } else if (scholarlyFilter === 'paper') {
-      const isPaper = s.documentType === 'Research Paper' || s.documentType === 'Conference Proceeding' || s.documentType === 'Review Article';
-      if (!isPaper) return false;
-    } else if (scholarlyFilter === 'preprint') {
-      if (s.documentType !== 'Preprint' && s.source !== 'arXiv') return false;
-    }
+  const filteredScholarly = useMemo(() => {
+    return scholarlyResults.filter(s => {
+      const titleLower = (s.title || '').toLowerCase();
+      if (scholarlyFilter === 'thesis') {
+        const isThesis = s.documentType === 'Thesis' || s.documentType === 'Dissertation' || titleLower.includes('thesis') || titleLower.includes('dissertation');
+        if (!isThesis) return false;
+      } else if (scholarlyFilter === 'paper') {
+        const isPaper = s.documentType === 'Research Paper' || s.documentType === 'Conference Proceeding' || s.documentType === 'Review Article';
+        if (!isPaper) return false;
+      } else if (scholarlyFilter === 'preprint') {
+        if (s.documentType !== 'Preprint' && s.source !== 'arXiv') return false;
+      }
+      return true;
+    });
+  }, [scholarlyResults, scholarlyFilter]);
 
-    return true;
-  });
+  const statsPaperIds = useMemo(() => {
+    const ids: string[] = [];
+    scholarlyResults.forEach(s => ids.push(getPaperId(s)));
+    localPapers.forEach(p => ids.push(getPaperId({ id: p.id, doi: p.doi, source: 'collabx' })));
+    return Array.from(new Set(ids));
+  }, [scholarlyResults, localPapers]);
+
+  const statsPaperIdsKey = statsPaperIds.join('|');
 
   // Batched retrieval of community ratings for all visible scholarly works & repository papers
   useEffect(() => {
-    const ids: string[] = [];
-    scholarlyResults.forEach(s => ids.push(getPaperId(s)));
-    localPapers.forEach(p => ids.push(getPaperId(p)));
-
-    if (ids.length > 0) {
-      RatingService.batchGetPaperStats(ids).then(stats => {
+    if (!isOpen || statsPaperIds.length === 0) return;
+    let cancelled = false;
+    RatingService.batchGetPaperStats(statsPaperIds).then(stats => {
+      if (!cancelled && stats && Object.keys(stats).length > 0) {
         setPaperStatsMap(prev => ({ ...prev, ...stats }));
-      });
-    }
-  }, [scholarlyResults, localPapers]);
+      }
+    }).catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, statsPaperIdsKey]);
 
   // Sort scholarly results according to selected sortBy
   const sortedScholarly = useMemo(() => {
@@ -160,7 +198,6 @@ export const SearchModal: React.FC<SearchModalProps> = ({
         const bStats = paperStatsMap[bId];
         const aHas = (aStats?.ratingCount || 0) > 0;
         const bHas = (bStats?.ratingCount || 0) > 0;
-        // Papers with no ratings go last
         if (aHas && !bHas) return -1;
         if (!aHas && bHas) return 1;
         if (aHas && bHas) {
@@ -174,13 +211,16 @@ export const SearchModal: React.FC<SearchModalProps> = ({
       if (sortBy === 'most_cited') {
         return (b.citedByCount || 0) - (a.citedByCount || 0);
       }
-      return 0; // relevance preserves API order
+      return 0;
     });
   }, [filteredScholarly, sortBy, paperStatsMap]);
 
-  const thesesCount = scholarlyResults.filter(s => 
-    s.documentType === 'Thesis' || s.documentType === 'Dissertation' || s.title.toLowerCase().includes('thesis') || s.title.toLowerCase().includes('dissertation')
-  ).length;
+  if (!isOpen) return null;
+
+  const thesesCount = scholarlyResults.filter(s => {
+    const t = (s.title || '').toLowerCase();
+    return s.documentType === 'Thesis' || s.documentType === 'Dissertation' || t.includes('thesis') || t.includes('dissertation');
+  }).length;
 
   const copyCitation = (paper: { title: string; authors: string[]; year: number; doi?: string; venue?: string }, id: string) => {
     const { apa } = ExternalSearchService.generateCitation(paper);

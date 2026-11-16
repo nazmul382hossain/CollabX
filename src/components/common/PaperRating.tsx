@@ -128,9 +128,11 @@ export const PaperRating: React.FC<PaperRatingProps> = ({
     }
   };
 
-  const hasRatings = Boolean(stats && stats.ratingCount > 0 && stats.average > 0);
-  const displayAverage = hasRatings && stats ? stats.average.toFixed(1) : null;
-  const displayCount = hasRatings && stats ? stats.ratingCount : 0;
+  const numericCount = Number(stats?.ratingCount) || 0;
+  const numericAvg = Number(stats?.average) || 0;
+  const hasRatings = Boolean(stats && numericCount > 0 && Number.isFinite(numericAvg) && numericAvg > 0);
+  const displayAverage = hasRatings ? numericAvg.toFixed(1) : null;
+  const displayCount = hasRatings ? numericCount : 0;
 
   const starLabels = [
     'Select a score',

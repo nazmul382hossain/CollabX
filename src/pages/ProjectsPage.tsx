@@ -42,9 +42,12 @@ export const ProjectsPage: React.FC<ProjectsPageProps> = ({
   initialAreaSlug,
   initialSearchQuery
 }) => {
-  const allProjects = storage.getProjects();
-  const allPapers = storage.getPapers();
-  const savedProjectIds = currentUser ? storage.getSavedProjectIds(currentUser.id) : [];
+  const allProjects = useMemo(() => storage.getProjects(), []);
+  const allPapers = useMemo(() => storage.getPapers(), []);
+  const savedProjectIds = useMemo(
+    () => (currentUser ? storage.getSavedProjectIds(currentUser.id) : []),
+    [currentUser?.id]
+  );
 
   // Filter States
   const [searchQuery, setSearchQuery] = useState(initialSearchQuery || '');
@@ -118,17 +121,33 @@ export const ProjectsPage: React.FC<ProjectsPageProps> = ({
   useEffect(() => {
     if (!searchQuery.trim()) {
       setScholarlyResults([]);
+      setLoadingScholarly(false);
       return;
     }
 
+    let cancelled = false;
     const timer = setTimeout(async () => {
       setLoadingScholarly(true);
-      const res = await ExternalSearchService.searchScholarly(searchQuery);
-      setScholarlyResults(res);
-      setLoadingScholarly(false);
+      try {
+        const res = await ExternalSearchService.searchScholarly(searchQuery);
+        if (!cancelled) {
+          setScholarlyResults(Array.isArray(res) ? res : []);
+        }
+      } catch {
+        if (!cancelled) {
+          setScholarlyResults([]);
+        }
+      } finally {
+        if (!cancelled) {
+          setLoadingScholarly(false);
+        }
+      }
     }, 300);
 
-    return () => clearTimeout(timer);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
   }, [searchQuery]);
 
   // Local matching papers
@@ -136,24 +155,35 @@ export const ProjectsPage: React.FC<ProjectsPageProps> = ({
     if (!searchQuery.trim()) return [];
     const q = searchQuery.toLowerCase();
     return allPapers.filter(p => 
-      p.title.toLowerCase().includes(q) ||
-      p.abstract.toLowerCase().includes(q) ||
-      p.authors.some(a => a.toLowerCase().includes(q)) ||
-      p.keywords.some(k => k.toLowerCase().includes(q))
+      (p.title || '').toLowerCase().includes(q) ||
+      (p.abstract || '').toLowerCase().includes(q) ||
+      (Array.isArray(p.authors) && p.authors.some(a => (a || '').toLowerCase().includes(q))) ||
+      (Array.isArray(p.keywords) && p.keywords.some(k => (k || '').toLowerCase().includes(q)))
     );
   }, [allPapers, searchQuery]);
 
-  // Batched retrieval of community ratings for scholarly literature and local repository papers
-  useEffect(() => {
+  const statsPaperIds = useMemo(() => {
     const ids: string[] = [];
     scholarlyResults.forEach(s => ids.push(getPaperId(s)));
-    matchedLocalPapers.forEach(p => ids.push(getPaperId(p)));
-    if (ids.length > 0) {
-      RatingService.batchGetPaperStats(ids).then(stats => {
-        setPaperStatsMap(prev => ({ ...prev, ...stats }));
-      });
-    }
+    matchedLocalPapers.forEach(p => ids.push(getPaperId({ id: p.id, doi: p.doi, source: 'collabx' })));
+    return Array.from(new Set(ids));
   }, [scholarlyResults, matchedLocalPapers]);
+
+  const statsPaperIdsKey = statsPaperIds.join('|');
+
+  // Batched retrieval of community ratings for scholarly literature and local repository papers
+  useEffect(() => {
+    if (statsPaperIds.length === 0) return;
+    let cancelled = false;
+    RatingService.batchGetPaperStats(statsPaperIds).then(stats => {
+      if (!cancelled && stats && Object.keys(stats).length > 0) {
+        setPaperStatsMap(prev => ({ ...prev, ...stats }));
+      }
+    }).catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [statsPaperIdsKey]);
 
   // Recommendations mapping
   const recommendationsMap = useMemo(() => {
@@ -171,11 +201,11 @@ export const ProjectsPage: React.FC<ProjectsPageProps> = ({
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase();
         const matches = 
-          p.title.toLowerCase().includes(q) ||
-          p.summary.toLowerCase().includes(q) ||
-          p.supervisorName.toLowerCase().includes(q) ||
-          p.areaName.toLowerCase().includes(q) ||
-          p.requiredSkills.some(s => s.toLowerCase().includes(q));
+          (p.title || '').toLowerCase().includes(q) ||
+          (p.summary || '').toLowerCase().includes(q) ||
+          (p.supervisorName || '').toLowerCase().includes(q) ||
+          (p.areaName || '').toLowerCase().includes(q) ||
+          (Array.isArray(p.requiredSkills) && p.requiredSkills.some(s => (s || '').toLowerCase().includes(q)));
         if (!matches) return false;
       }
 
